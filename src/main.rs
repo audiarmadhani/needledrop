@@ -65,7 +65,12 @@ enum Command {
 fn main() -> Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     match Cli::parse().command {
-        None => run_tui(runtime),
+        None => {
+            // With the app installed, run as the app, so notch apps can see it.
+            #[cfg(target_os = "macos")]
+            macos_app::run_from_app()?;
+            run_tui(runtime)
+        }
         Some(Command::Login {
             browser,
             paste,

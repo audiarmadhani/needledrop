@@ -40,7 +40,8 @@ This wraps needledrop in `~/Applications/needledrop.app` (marked as a music
 app, with no Dock icon) and links `~/.local/bin/needledrop` to it. Control
 Center's Now Playing works either way, but notch and menu bar utilities such as
 Vorssaint only list players that are music *apps*, and a plain binary started
-from a terminal isn't one. Run it again after rebuilding to update the app.
+from a terminal isn't one. After that, any other copy of needledrop you run
+(a Homebrew upgrade, a fresh build) updates the app and runs from it.
 
 ## Sign in
 
