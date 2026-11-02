@@ -17,6 +17,7 @@ use crate::pages::{Content, Loaded, Nav, Page};
 use crate::palette::Palette;
 use crate::persist::{Session, Settings};
 use crate::player::{Player, PlayerEvent};
+use crate::queue;
 use crate::retro::ArtStyle;
 use crate::streams::{self, Streams};
 use crate::visualizer::Visualizer;
@@ -141,6 +142,17 @@ impl Playback {
     }
 }
 
+/// The `P` dialog: add a song to one of your playlists, or to a new one.
+pub struct PlaylistPicker {
+    pub track: Track,
+    /// Your own playlists, the ones you can add to.
+    pub playlists: Vec<Playlist>,
+    /// 0 is "New playlist", then the playlists in order.
+    pub selected: usize,
+    /// The new playlist's name, while it's being typed.
+    pub naming: Option<String>,
+}
+
 pub struct App {
     pub focus: Focus,
     pub query: String,
@@ -166,6 +178,8 @@ pub struct App {
     pub show_lyrics: bool,
     /// Whether the full-screen minimal now-playing view is up.
     pub minimal: bool,
+    /// The add-to-playlist dialog, while it's open.
+    pub picker: Option<PlaylistPicker>,
     /// Lyrics and the video id they belong to.
     pub lyrics: Option<(String, LyricsState)>,
     /// Scroll offset for plain (unsynced) lyrics.
@@ -245,6 +259,7 @@ impl App {
             repeat: settings.repeat,
             show_lyrics: false,
             minimal: false,
+            picker: None,
             lyrics: None,
             lyrics_scroll: 0,
             visualizer: Visualizer::new(settings.visualizer),
@@ -383,6 +398,17 @@ impl App {
                     self.lyrics = Some((video_id, state));
                 }
             }
+            Event::Notice(message) => self.status = Some(message),
+            Event::PlaylistCreated { message, playlist } => {
+                self.status = Some(message);
+                // YouTube's library listing lags behind a new playlist, so a
+                // refresh wouldn't show it yet. Add it where YouTube will put
+                // it: right after Liked Music.
+                if let Library::Loaded(playlists) = &mut self.library {
+                    let at = usize::from(playlists.first().is_some_and(|p| p.browse_id == LIKED_MUSIC));
+                    playlists.insert(at, playlist);
+                }
+            }
             Event::Liked(ids) => self.liked = ids.into_iter().collect(),
             Event::Palette(palette) => self.palette = palette,
             Event::LikeFailed { video_id, liked, error } => {
@@ -491,6 +517,10 @@ impl App {
             self.should_quit = true;
             return Ok(());
         }
+        if self.picker.is_some() {
+            self.handle_picker_key(key);
+            return Ok(());
+        }
         if self.minimal {
             if matches!(key.code, KeyCode::Char('M') | KeyCode::Esc) {
                 self.minimal = false;
@@ -575,7 +605,19 @@ impl App {
             KeyCode::Enter if self.lyrics_have_focus() => {}
             KeyCode::Enter => self.activate_selected().await?,
             KeyCode::Char('a') if self.focus == Focus::Tracks => self.enqueue_selected().await?,
+            KeyCode::Char('N') => self.play_next().await?,
+            KeyCode::Char('P') => self.open_picker(),
             KeyCode::Char('d') | KeyCode::Delete if self.focus == Focus::Queue => self.remove_selected().await?,
+            KeyCode::Char('d') | KeyCode::Delete if self.focus == Focus::Tracks && !self.show_lyrics => {
+                self.remove_from_playlist()
+            }
+            KeyCode::Char('J') if self.focus == Focus::Queue => self.move_queued(1),
+            KeyCode::Char('K') if self.focus == Focus::Queue => self.move_queued(-1),
+            KeyCode::Char('X') if self.focus == Focus::Queue => {
+                queue::keep_only_current(&mut self.queue, &mut self.current);
+                self.queue_state.select(self.current);
+                self.status = Some("Cleared the queue".into());
+            }
             KeyCode::Char(' ') if self.current.is_some() => self.player.toggle_pause().await?,
             KeyCode::Char('n') => self.advance(Advance::Skip).await?,
             KeyCode::Char('s') => self.set_shuffle(!self.shuffle),
@@ -727,12 +769,16 @@ impl App {
 
     fn open_playlist(&mut self, title: String, browse_id: String, push: bool) {
         self.focus = Focus::Tracks;
+        let id = browse_id.clone();
         self.open_page(title, false, push, move |api| async move {
             Ok(Loaded::Tracks {
                 tracks: api.playlist_tracks(&browse_id).await?,
                 subtitle: None,
             })
         });
+        if let Some(page) = self.nav.current_mut() {
+            page.playlist = Some(id);
+        }
     }
 
     fn open_album(&mut self, title: String, browse_id: String) {
@@ -870,6 +916,185 @@ impl App {
             self.play(self.queue.len() - 1).await?;
         }
         Ok(())
+    }
+
+    /// `N`: the target song plays right after the current one. From the
+    /// queue, that moves it; from anywhere else, it adds it.
+    async fn play_next(&mut self) -> Result<()> {
+        if self.focus == Focus::Queue && !self.minimal {
+            let (Some(from), Some(current)) = (self.queue_state.selected(), self.current) else {
+                return Ok(());
+            };
+            if from != current {
+                let track = self.queue.remove(from);
+                let current = if from < current { current - 1 } else { current };
+                self.current = Some(current);
+                self.status = Some(format!("Playing “{}” next", track.title));
+                let at = queue::insert_next(&mut self.queue, Some(current), track);
+                self.queue_state.select(Some(at));
+            }
+            return Ok(());
+        }
+        let Some(track) = self.target_track().cloned() else {
+            return Ok(());
+        };
+        self.status = Some(format!("Playing “{}” next", track.title));
+        let at = queue::insert_next(&mut self.queue, self.current, track);
+        if self.current.is_none() {
+            self.play(at).await?;
+        }
+        Ok(())
+    }
+
+    /// `J` / `K`: moves the selected queue song down or up.
+    fn move_queued(&mut self, delta: isize) {
+        if let Some(from) = self.queue_state.selected() {
+            let to = queue::move_song(&mut self.queue, &mut self.current, from, delta);
+            self.queue_state.select(Some(to));
+        }
+    }
+
+    /// Whether `browse_id` is one of the user's own playlists (the ones they
+    /// can edit): in the library, with their name as its author.
+    fn owns_playlist(&self, browse_id: &str) -> bool {
+        let Some(account) = &self.account else { return false };
+        self.library
+            .playlists()
+            .iter()
+            .any(|p| p.browse_id == browse_id && p.subtitle.starts_with(&account.name))
+    }
+
+    /// `P`: opens the add-to-playlist dialog for the target song.
+    fn open_picker(&mut self) {
+        if !self.api.is_signed_in() {
+            self.status = Some("Sign in to add songs to playlists: needledrop login --browser <name>".into());
+            return;
+        }
+        let Some(track) = self.target_track().cloned() else {
+            return;
+        };
+        let playlists: Vec<Playlist> = self
+            .library
+            .playlists()
+            .iter()
+            .filter(|p| self.owns_playlist(&p.browse_id))
+            .cloned()
+            .collect();
+        let selected = usize::from(!playlists.is_empty());
+        self.picker = Some(PlaylistPicker {
+            track,
+            playlists,
+            selected,
+            naming: None,
+        });
+    }
+
+    fn handle_picker_key(&mut self, key: KeyEvent) {
+        let Some(mut picker) = self.picker.take() else { return };
+        if let Some(name) = picker.naming.as_mut() {
+            match key.code {
+                KeyCode::Enter if !name.trim().is_empty() => {
+                    let name = name.trim().to_owned();
+                    return self.create_playlist(picker.track, name);
+                }
+                KeyCode::Esc => picker.naming = None,
+                KeyCode::Backspace => {
+                    name.pop();
+                }
+                KeyCode::Char(c) => name.push(c),
+                _ => {}
+            }
+            self.picker = Some(picker);
+            return;
+        }
+        let last = picker.playlists.len();
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => return,
+            KeyCode::Char('j') | KeyCode::Down => picker.selected = (picker.selected + 1).min(last),
+            KeyCode::Char('k') | KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
+            KeyCode::Char('g') | KeyCode::Home => picker.selected = 0,
+            KeyCode::Char('G') | KeyCode::End => picker.selected = last,
+            KeyCode::Enter if picker.selected == 0 => picker.naming = Some(String::new()),
+            KeyCode::Enter => {
+                let playlist = picker.playlists[picker.selected - 1].clone();
+                return self.add_to_playlist(picker.track, playlist);
+            }
+            _ => {}
+        }
+        self.picker = Some(picker);
+    }
+
+    /// Adds `track` to `playlist` unless it's already there. YouTube doesn't
+    /// skip duplicates itself, so the playlist is checked first.
+    fn add_to_playlist(&mut self, track: Track, playlist: Playlist) {
+        self.status = Some(format!("Adding “{}” to {}…", track.title, playlist.title));
+        let api = self.api.clone();
+        let events = self.events.clone();
+        tokio::spawn(async move {
+            let message = match api.playlist_tracks(&playlist.browse_id).await {
+                Ok(tracks) if tracks.iter().any(|t| t.video_id == track.video_id) => {
+                    format!("“{}” is already in {}", track.title, playlist.title)
+                }
+                Ok(_) => match api.add_to_playlist(&playlist.browse_id, &track.video_id).await {
+                    Ok(()) => format!("Added “{}” to {}", track.title, playlist.title),
+                    Err(error) => format!("Couldn't add to {}: {error:#}", playlist.title),
+                },
+                Err(error) => format!("Couldn't add to {}: {error:#}", playlist.title),
+            };
+            let _ = events.send(Event::Notice(message));
+        });
+    }
+
+    fn create_playlist(&mut self, track: Track, name: String) {
+        self.status = Some(format!("Creating “{name}”…"));
+        let api = self.api.clone();
+        let events = self.events.clone();
+        let owner = self.account.as_ref().map(|a| a.name.clone()).unwrap_or_default();
+        tokio::spawn(async move {
+            let event = match api.create_playlist(&name, &[&track.video_id]).await {
+                Ok(browse_id) => Event::PlaylistCreated {
+                    message: format!("Created “{name}” with “{}”", track.title),
+                    // Same shape as the library's own entries, so it counts as ours.
+                    playlist: Playlist {
+                        browse_id,
+                        title: name,
+                        subtitle: format!("{owner} • 1 track"),
+                    },
+                },
+                Err(error) => Event::Notice(format!("Couldn't create the playlist: {error:#}")),
+            };
+            let _ = events.send(event);
+        });
+    }
+
+    /// `d` on a playlist page: removes the selected song from the playlist,
+    /// if it's one of the user's own.
+    fn remove_from_playlist(&mut self) {
+        let Some(page) = self.nav.current() else { return };
+        let Some(browse_id) = page.playlist.clone() else { return };
+        if !self.owns_playlist(&browse_id) {
+            self.status = Some("Couldn't remove: you can only edit your own playlists".into());
+            return;
+        }
+        let title = page.title.clone();
+        let Some(set_video_id) = page.selected_track().and_then(|t| t.set_video_id.clone()) else {
+            return;
+        };
+        let Some(track) = self.nav.current_mut().and_then(Page::remove_selected_track) else {
+            return;
+        };
+        self.status = Some(format!("Removed “{}” from {title}", track.title));
+        let api = self.api.clone();
+        let events = self.events.clone();
+        tokio::spawn(async move {
+            if let Err(error) = api
+                .remove_from_playlist(&browse_id, &track.video_id, &set_video_id)
+                .await
+            {
+                let message = format!("Couldn't remove “{}” from {title}: {error:#}", track.title);
+                let _ = events.send(Event::Notice(message));
+            }
+        });
     }
 
     async fn remove_selected(&mut self) -> Result<()> {

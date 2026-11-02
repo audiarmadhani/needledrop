@@ -16,6 +16,10 @@ pub struct Track {
     /// Browse id of the album's page, `MPREb_…`.
     #[serde(default)]
     pub album_id: Option<String>,
+    /// This entry's id within the playlist it was loaded from, needed to
+    /// remove it (a playlist can hold the same song more than once).
+    #[serde(default)]
+    pub set_video_id: Option<String>,
 }
 
 impl Track {

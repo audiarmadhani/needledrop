@@ -81,7 +81,11 @@ Without signing in, search and playback still work.
 | `i` / `o` | Open the selected (or playing) song's artist / album |
 | `/` | Search |
 | `a` | Add the selected track to the queue |
-| `d` | Remove the selected track from the queue |
+| `N` | Play the selected track next (in the queue: move it up to next) |
+| `P` | Add the selected (or playing) track to one of your playlists, or a new one |
+| `d` | Remove the selected track from the queue, or from your own playlist |
+| `J` / `K` | In the queue: move the selected track down / up |
+| `X` | In the queue: clear everything but the playing track |
 | `space` | Pause or resume |
 | `n` / `p` | Next or previous track |
 | `,` / `.` | Seek 5 s (also `←` / `→` and `h` / `l` outside card pages) |

@@ -72,6 +72,8 @@ pub struct Page {
     /// Which load fills this page, so a late response can't land on another.
     pub request: u64,
     pub content: Content,
+    /// The playlist this page shows, if it's one: its browse id.
+    pub playlist: Option<String>,
 }
 
 /// What a finished load puts on its page.
@@ -102,6 +104,7 @@ impl Page {
             loading: true,
             request,
             content,
+            playlist: None,
         }
     }
 
@@ -126,6 +129,21 @@ impl Page {
             Content::Tracks { tracks, .. } => tracks.is_empty(),
             Content::Shelves(shelves) => shelves.shelves.is_empty(),
         }
+    }
+
+    /// Takes the selected song off a song list (after removing it from its
+    /// playlist), keeping the selection on the next one.
+    pub fn remove_selected_track(&mut self) -> Option<Track> {
+        let Content::Tracks { tracks, state } = &mut self.content else {
+            return None;
+        };
+        let index = state.selected()?;
+        if index >= tracks.len() {
+            return None;
+        }
+        let track = tracks.remove(index);
+        state.select((!tracks.is_empty()).then(|| index.min(tracks.len() - 1)));
+        Some(track)
     }
 
     pub fn is_shelves(&self) -> bool {

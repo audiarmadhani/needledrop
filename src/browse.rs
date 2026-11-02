@@ -137,6 +137,7 @@ pub fn parse_tile(tile: &Value) -> Option<Item> {
         thumbnail,
         artist_id,
         album_id,
+        set_video_id: None,
         ..Track::default()
     }))
 }
@@ -176,6 +177,7 @@ pub fn parse_song_row(row: &Value) -> Option<Track> {
         thumbnail: thumbnail_url(row),
         artist_id,
         album_id,
+        set_video_id: None,
     })
 }
 
