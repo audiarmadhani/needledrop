@@ -588,7 +588,12 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
     let keys: &[(&str, &str)] = match app.focus {
-        Focus::Search => &[("enter", "search"), ("esc", "back"), ("ctrl-c", "quit")],
+        Focus::Search => &[
+            ("enter", "search"),
+            ("ctrl-u", "clear"),
+            ("esc", "back"),
+            ("ctrl-c", "quit"),
+        ],
         Focus::Library => &[
             ("enter", "open"),
             ("/", "search"),

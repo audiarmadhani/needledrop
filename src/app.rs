@@ -548,6 +548,9 @@ impl App {
                 KeyCode::Backspace => {
                     self.query.pop();
                 }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => self.query.clear(),
+                // Other ctrl combinations aren't text.
+                KeyCode::Char(_) if key.modifiers.contains(KeyModifiers::CONTROL) => {}
                 KeyCode::Char(c) => self.query.push(c),
                 _ => {}
             }
@@ -1001,6 +1004,8 @@ impl App {
                 KeyCode::Backspace => {
                     name.pop();
                 }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => name.clear(),
+                KeyCode::Char(_) if key.modifiers.contains(KeyModifiers::CONTROL) => {}
                 KeyCode::Char(c) => name.push(c),
                 _ => {}
             }
