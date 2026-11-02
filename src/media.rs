@@ -150,7 +150,11 @@ fn apply(controls: &mut MediaControls, update: Update) {
             progress: progress(position),
         }),
         Update::Stopped => controls.set_playback(MediaPlayback::Stopped),
+        // Only macOS's Now Playing has a shuffle toggle (MPRIS has none in souvlaki).
+        #[cfg(target_os = "macos")]
         Update::Shuffle(on) => controls.set_shuffle(Some(on)),
+        #[cfg(not(target_os = "macos"))]
+        Update::Shuffle(_) => Ok(()),
     };
 }
 
