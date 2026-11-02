@@ -5,6 +5,7 @@ mod auth;
 mod browse;
 mod cards;
 mod event;
+mod help;
 #[cfg(target_os = "macos")]
 mod icon;
 mod lyrics;

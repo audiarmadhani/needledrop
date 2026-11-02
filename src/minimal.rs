@@ -268,6 +268,7 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
                 ("A", "art"),
                 ("space", "pause"),
                 ("n/p", "skip"),
+                ("?", "help"),
             ]
             .iter()
             .flat_map(|(key, action)| {

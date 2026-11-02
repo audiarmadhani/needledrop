@@ -29,6 +29,8 @@ const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const SESSION_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 /// Browse id of the Liked Music auto-playlist.
 const LIKED_MUSIC: &str = "VLLM";
+/// The library list's fixed entries above the playlists: Home, Explore.
+const LIBRARY_PAGES: usize = 2;
 const VOLUME_STEP: f64 = 5.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +182,8 @@ pub struct App {
     pub minimal: bool,
     /// The add-to-playlist dialog, while it's open.
     pub picker: Option<PlaylistPicker>,
+    /// The `?` help screen's scroll offset, while it's open.
+    pub help: Option<u16>,
     /// Lyrics and the video id they belong to.
     pub lyrics: Option<(String, LyricsState)>,
     /// Scroll offset for plain (unsynced) lyrics.
@@ -260,6 +264,7 @@ impl App {
             show_lyrics: false,
             minimal: false,
             picker: None,
+            help: None,
             lyrics: None,
             lyrics_scroll: 0,
             visualizer: Visualizer::new(settings.visualizer),
@@ -521,6 +526,15 @@ impl App {
             self.handle_picker_key(key);
             return Ok(());
         }
+        if let Some(scroll) = &mut self.help {
+            match key.code {
+                KeyCode::Char('?' | 'q') | KeyCode::Esc => self.help = None,
+                KeyCode::Char('j') | KeyCode::Down => *scroll = scroll.saturating_add(1),
+                KeyCode::Char('k') | KeyCode::Up => *scroll = scroll.saturating_sub(1),
+                _ => {}
+            }
+            return Ok(());
+        }
         if self.minimal {
             if matches!(key.code, KeyCode::Char('M') | KeyCode::Esc) {
                 self.minimal = false;
@@ -530,7 +544,7 @@ impl App {
             let playback = matches!(
                 key.code,
                 KeyCode::Char(
-                    'q' | ' ' | 'n' | 'p' | 'l' | 'h' | ',' | '.' | '+' | '=' | '-' | 's' | 'r' | 'f' | 'V' | 'A'
+                    'q' | ' ' | 'n' | 'p' | 'l' | 'h' | ',' | '.' | '+' | '=' | '-' | 's' | 'r' | 'f' | 'V' | 'A' | '?'
                 ) | KeyCode::Left
                     | KeyCode::Right
             );
@@ -585,6 +599,7 @@ impl App {
                 self.visualizer.style = self.visualizer.style.next();
                 self.status = Some(format!("Visualizer: {}", self.visualizer.style.name()));
             }
+            KeyCode::Char('?') => self.help = Some(0),
             KeyCode::Char('M') => {
                 self.minimal = true;
                 self.load_lyrics();
@@ -757,6 +772,18 @@ impl App {
         });
     }
 
+    /// Explore, Charts, a mood: any page of shelves by browse id. `push`: on
+    /// top of the current page; otherwise it starts a new stack.
+    fn open_browse(&mut self, title: String, browse_id: String, params: Option<String>, push: bool) {
+        self.focus = Focus::Tracks;
+        self.open_page(title, true, push, move |api| async move {
+            Ok(Loaded::Shelves {
+                shelves: api.browse_page(&browse_id, params.as_deref()).await?,
+                subtitle: None,
+            })
+        });
+    }
+
     fn submit_search(&mut self) {
         let query = self.query.trim().to_owned();
         if query.is_empty() {
@@ -838,8 +865,8 @@ impl App {
         };
         match self.focus {
             Focus::Library => {
-                // Home sits above the playlists.
-                let len = 1 + self.library.playlists().len();
+                // Home and Explore sit above the playlists.
+                let len = LIBRARY_PAGES + self.library.playlists().len();
                 self.library_state.select(step(self.library_state.selected(), len));
             }
             Focus::Tracks => {
@@ -862,8 +889,9 @@ impl App {
             Focus::Library => {
                 match self.library_state.selected() {
                     Some(0) | None => self.open_home(),
+                    Some(1) => self.open_browse("Explore".into(), "FEmusic_explore".into(), None, false),
                     Some(i) => {
-                        if let Some(playlist) = self.library.playlists().get(i - 1).cloned() {
+                        if let Some(playlist) = self.library.playlists().get(i - LIBRARY_PAGES).cloned() {
                             self.open_playlist(playlist.title, playlist.browse_id, false);
                         }
                     }
@@ -883,6 +911,15 @@ impl App {
                     }
                     Some(Item::Playlist { browse_id, title, .. }) => {
                         self.open_playlist(title, browse_id, true);
+                        return Ok(());
+                    }
+                    Some(Item::Category {
+                        browse_id,
+                        params,
+                        title,
+                        ..
+                    }) => {
+                        self.open_browse(title, browse_id, params, true);
                         return Ok(());
                     }
                     Some(Item::Song(_)) | None => {}
