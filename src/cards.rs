@@ -18,7 +18,7 @@ use std::collections::HashSet;
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -206,6 +206,9 @@ fn render_placeholder(frame: &mut Frame, area: Rect, item: &Item, round: bool) {
         height: side / 2,
         ..area
     };
+    if let Item::Category { title, color, .. } = item {
+        return render_category(frame, tile, title, *color);
+    }
     if !round {
         frame.render_widget(Block::new().style(Style::new().bg(THEME.selection_bg)), tile);
     }
@@ -219,12 +222,39 @@ fn render_placeholder(frame: &mut Frame, area: Rect, item: &Item, round: bool) {
     );
 }
 
+/// A category's tile: its name on YouTube's color for it, in black or white,
+/// whichever reads better on that color.
+fn render_category(frame: &mut Frame, tile: Rect, title: &str, color: Option<[u8; 3]>) {
+    let Some([r, g, b]) = color else {
+        frame.render_widget(Block::new().style(Style::new().bg(THEME.selection_bg)), tile);
+        let [_, middle, _] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1), Constraint::Fill(1)]).areas(tile);
+        let name = Paragraph::new(fit(title, tile.width as usize - 2)).alignment(Alignment::Center);
+        frame.render_widget(name, middle);
+        return;
+    };
+    let light = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32 > 150.0;
+    let text = if light {
+        Color::Rgb(0, 0, 0)
+    } else {
+        Color::Rgb(255, 255, 255)
+    };
+    frame.render_widget(Block::new().style(Style::new().bg(Color::Rgb(r, g, b))), tile);
+    let [_, middle, _] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(1), Constraint::Fill(1)]).areas(tile);
+    let name = Paragraph::new(fit(title, tile.width.saturating_sub(2) as usize))
+        .style(Style::new().fg(text).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center);
+    frame.render_widget(name, middle);
+}
+
 fn symbol(item: &Item) -> &'static str {
     match item {
         Item::Song(_) => "♪",
         Item::Album { .. } => "◉",
         Item::Artist { .. } => "◆",
         Item::Playlist { .. } => "≡",
+        Item::Category { .. } => "#",
     }
 }
 

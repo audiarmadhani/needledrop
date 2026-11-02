@@ -192,6 +192,11 @@ pub fn parse_shelves(sections: &Value) -> Vec<Shelf> {
             let (title, contents) = if let Some(carousel) = section.get("musicCarouselShelfRenderer") {
                 let title = runs_text(&carousel["header"]["musicCarouselShelfBasicHeaderRenderer"]["title"]);
                 (title, &carousel["contents"])
+            } else if let Some(grid) = section.get("gridRenderer") {
+                (
+                    runs_text(&grid["header"]["gridHeaderRenderer"]["title"]),
+                    &grid["items"],
+                )
             } else {
                 let shelf = section.get("musicShelfRenderer")?;
                 (runs_text(&shelf["title"]), &shelf["contents"])
@@ -203,11 +208,37 @@ pub fn parse_shelves(sections: &Value) -> Vec<Shelf> {
                     item.get("musicTwoRowItemRenderer")
                         .and_then(parse_tile)
                         .or_else(|| item.get("musicResponsiveListItemRenderer").and_then(parse_row))
+                        .or_else(|| item.get("musicNavigationButtonRenderer").and_then(parse_button))
                 })
                 .collect();
+            // Explore opens with an untitled row of buttons.
+            let title = if title.is_empty() { "Browse".to_owned() } else { title };
             (!items.is_empty()).then_some(Shelf { title, items })
         })
         .collect()
+}
+
+/// A category button ("Charts", "Chill"): a page to browse, in its color.
+fn parse_button(button: &Value) -> Option<Item> {
+    let endpoint = &button["clickCommand"]["browseEndpoint"];
+    // `leftStripeColor` is ARGB packed into one number.
+    let color = button["solid"]["leftStripeColor"]
+        .as_u64()
+        .map(|argb| [(argb >> 16) as u8, (argb >> 8) as u8, argb as u8]);
+    Some(Item::Category {
+        browse_id: endpoint["browseId"].as_str()?.to_owned(),
+        params: endpoint["params"].as_str().map(str::to_owned),
+        title: runs_text(&button["buttonText"]),
+        color,
+    })
+}
+
+/// The shelves of a single-column browse page: Explore, Charts, a mood.
+pub fn parse_browse_page(response: &Value) -> Vec<Shelf> {
+    parse_shelves(
+        &response["contents"]["singleColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"]["sectionListRenderer"]
+            ["contents"],
+    )
 }
 
 /// The shelves on a page of Home, and the token for the next page.
@@ -440,6 +471,45 @@ mod tests {
         assert_eq!(track.album.as_deref(), Some("The Art of Loving"));
         assert_eq!(track.thumbnail.as_deref(), Some("cover"));
         assert_eq!(track.duration, Some(Duration::from_secs(41)));
+    }
+
+    #[test]
+    fn grids_of_category_buttons_become_shelves() {
+        let button = |text: &str, params: Option<&str>, color: u64| {
+            let mut endpoint = json!({ "browseId": "FEmusic_moods_and_genres_category" });
+            if let Some(p) = params {
+                endpoint["params"] = json!(p);
+            }
+            json!({ "musicNavigationButtonRenderer": {
+                "buttonText": { "runs": [run(text, None)] },
+                "solid": { "leftStripeColor": color },
+                "clickCommand": { "browseEndpoint": endpoint },
+            } })
+        };
+        let sections = json!([
+            { "gridRenderer": { "items": [button("Charts", None, 0xFF102030)] } },
+            { "gridRenderer": {
+                "header": { "gridHeaderRenderer": { "title": { "runs": [run("Moods & moments", None)] } } },
+                "items": [button("Chill", Some("p1"), 4288988671)],
+            } },
+        ]);
+        let shelves = parse_shelves(&sections);
+        assert_eq!(shelves[0].title, "Browse", "the untitled grid gets a name");
+        assert_eq!(shelves[1].title, "Moods & moments");
+        assert_eq!(
+            shelves[0].items[0],
+            Item::Category {
+                browse_id: "FEmusic_moods_and_genres_category".into(),
+                params: None,
+                title: "Charts".into(),
+                color: Some([0x10, 0x20, 0x30]),
+            }
+        );
+        let Item::Category { params, color, .. } = &shelves[1].items[0] else {
+            panic!("expected a category")
+        };
+        assert_eq!(params.as_deref(), Some("p1"));
+        assert_eq!(*color, Some([0xA4, 0xC5, 0xFF]), "4288988671 is 0xFFA4C5FF");
     }
 
     #[test]

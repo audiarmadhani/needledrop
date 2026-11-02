@@ -59,13 +59,21 @@ pub enum Item {
         subtitle: String,
         thumbnail: Option<String>,
     },
+    /// A page to browse, like "Charts" or the "Chill" mood: a browse id,
+    /// the `params` some of them need, and the color YouTube gives it.
+    Category {
+        browse_id: String,
+        params: Option<String>,
+        title: String,
+        color: Option<[u8; 3]>,
+    },
 }
 
 impl Item {
     pub fn title(&self) -> &str {
         match self {
             Item::Song(track) => &track.title,
-            Item::Album { title, .. } | Item::Playlist { title, .. } => title,
+            Item::Album { title, .. } | Item::Playlist { title, .. } | Item::Category { title, .. } => title,
             Item::Artist { name, .. } => name,
         }
     }
@@ -77,6 +85,7 @@ impl Item {
             Item::Album { thumbnail, .. } | Item::Artist { thumbnail, .. } | Item::Playlist { thumbnail, .. } => {
                 thumbnail.as_deref()
             }
+            Item::Category { .. } => None,
         }
     }
 
@@ -86,6 +95,7 @@ impl Item {
             Item::Album { subtitle, .. } | Item::Artist { subtitle, .. } | Item::Playlist { subtitle, .. } => {
                 subtitle.clone()
             }
+            Item::Category { .. } => "Browse".to_owned(),
         }
     }
 }

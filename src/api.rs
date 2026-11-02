@@ -138,6 +138,17 @@ impl Client {
         Ok(shelves)
     }
 
+    /// A page of shelves by browse id: Explore, Charts, New releases, Moods &
+    /// genres, or one mood (which also takes `params`).
+    pub async fn browse_page(&self, browse_id: &str, params: Option<&str>) -> Result<Vec<Shelf>> {
+        let mut body = json!({ "browseId": browse_id });
+        if let Some(params) = params {
+            body["params"] = json!(params);
+        }
+        let response = self.post("browse", &[], body).await?;
+        Ok(browse::parse_browse_page(&response))
+    }
+
     pub async fn artist(&self, browse_id: &str) -> Result<Artist> {
         let response = self.post("browse", &[], json!({ "browseId": browse_id })).await?;
         Ok(browse::parse_artist(&response))

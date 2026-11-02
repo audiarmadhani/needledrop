@@ -19,6 +19,7 @@
 
 <img src="docs/assets/demo.gif" alt="needledrop searching for a song, playing it with a visualizer, cycling album art palettes, showing synced lyrics, and switching to minimal mode">
 - Home: your Quick picks, mixes, Listen again, and recommendations, as rows of pixel-art cover cards
+- Explore: new releases, charts, and moods & genres
 - Artist and album pages, and search across songs, albums, artists, and playlists
 - Your YouTube Music library: Liked Music and playlists, with likes you can toggle
 - Search, a queue with shuffle and repeat, and endless autoplay (radio) when the queue runs out
@@ -36,6 +37,7 @@
 |  |  |
 |---|---|
 | 🏠 **Home** | Your Quick picks, mixes, Listen again, and recommendations |
+| 🧭 **Explore** | New releases, charts, and moods & genres |
 | 🔎 **Browse and search** | Artist and album pages; search across songs, albums, artists, and playlists |
 | 💜 **Your library** | Liked Music and playlists, with likes you can toggle |
 | 📻 **Endless queue** | Shuffle, repeat, and autoplay (radio) when the queue runs out, with gapless playback |
@@ -175,11 +177,12 @@ cargo run --release
 | `M` | Minimal mode |
 | `V` | Visualizer: bars → peaks → scope |
 | `A` | Art: theme → PICO-8 → Game Boy → C64 → original |
+| `?` | All the keys |
 
 </td></tr>
 </table>
 
-`enter` on a song plays it and queues the rest of its list or shelf. `f` in the
+Press `?` in the app for the full list. `enter` on a song plays it and queues the rest of its list or shelf. `f` in the
 library pane likes the playing song. When the last track in the queue starts
 and repeat is off, needledrop appends a radio based on it, so the music keeps
 going.

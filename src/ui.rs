@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::{App, Focus, Library, LyricsState, Repeat};
 use crate::art::PixelArt;
 use crate::cards;
+use crate::help;
 use crate::lyrics::Lyrics;
 use crate::minimal;
 use crate::pages::Content;
@@ -22,7 +23,8 @@ const LYRICS_FULL_WIDTH_BELOW: u16 = 90;
 
 pub fn render(app: &mut App, frame: &mut Frame) {
     if app.minimal {
-        return minimal::render(app, frame);
+        minimal::render(app, frame);
+        return render_dialogs(app, frame);
     }
     let [search, main, now_playing, footer] = Layout::vertical([
         Constraint::Length(3),
@@ -49,8 +51,16 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     }
     render_now_playing(app, frame, now_playing);
     render_footer(app, frame, footer);
+    render_dialogs(app, frame);
+}
+
+/// Pop-ups drawn over whichever view is showing.
+fn render_dialogs(app: &mut App, frame: &mut Frame) {
     if app.picker.is_some() {
         render_picker(app, frame);
+    }
+    if let Some(scroll) = &mut app.help {
+        help::render(frame, scroll);
     }
 }
 
@@ -254,8 +264,10 @@ fn render_library(app: &mut App, frame: &mut Frame, area: Rect) {
         frame.render_widget(paragraph.block(block), area);
         return;
     }
-    let home = ListItem::new(Line::from(vec![Span::styled("⌂ ", THEME.accent()), Span::raw("Home")]));
-    let items = std::iter::once(home).chain(
+    // The fixed pages first (see `LIBRARY_PAGES` in app.rs), then playlists.
+    let pages = [("⌂ ", "Home"), ("◎ ", "Explore")]
+        .map(|(icon, name)| ListItem::new(Line::from(vec![Span::styled(icon, THEME.accent()), Span::raw(name)])));
+    let items = pages.into_iter().chain(
         app.library
             .playlists()
             .iter()
@@ -595,6 +607,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             ("ctrl-c", "quit"),
         ],
         Focus::Library => &[
+            ("?", "help"),
             ("enter", "open"),
             ("/", "search"),
             ("space", "pause"),
@@ -605,6 +618,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             ("q", "quit"),
         ],
         Focus::Tracks => &[
+            ("?", "help"),
             ("enter", "play"),
             ("a/N", "queue/next"),
             ("P", "playlist"),
@@ -623,6 +637,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             ("q", "quit"),
         ],
         Focus::Queue => &[
+            ("?", "help"),
             ("enter", "play"),
             ("J/K", "move"),
             ("N", "next"),
