@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use crate::auth::{Credentials, ORIGIN};
@@ -235,6 +235,48 @@ impl Client {
         Ok((!text.trim().is_empty()).then(|| (text, runs_text(&shelf["footer"]))))
     }
 
+    /// Creates a private playlist holding `video_ids`; returns its browse id.
+    pub async fn create_playlist(&self, title: &str, video_ids: &[&str]) -> Result<String> {
+        self.require_sign_in("create playlists")?;
+        let body = json!({ "title": title, "description": "", "privacyStatus": "PRIVATE", "videoIds": video_ids });
+        let response = self.post("playlist/create", &[], body).await?;
+        let id = response["playlistId"]
+            .as_str()
+            .context("YouTube didn't create the playlist")?;
+        Ok(format!("VL{id}"))
+    }
+
+    pub async fn add_to_playlist(&self, browse_id: &str, video_id: &str) -> Result<()> {
+        self.require_sign_in("edit playlists")?;
+        let action = json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": video_id });
+        self.edit_playlist(browse_id, action).await
+    }
+
+    /// Removes one entry. `set_video_id` identifies the entry, since a
+    /// playlist can hold the same song more than once.
+    pub async fn remove_from_playlist(&self, browse_id: &str, video_id: &str, set_video_id: &str) -> Result<()> {
+        self.require_sign_in("edit playlists")?;
+        let action = json!({ "action": "ACTION_REMOVE_VIDEO", "setVideoId": set_video_id, "removedVideoId": video_id });
+        self.edit_playlist(browse_id, action).await
+    }
+
+    async fn edit_playlist(&self, browse_id: &str, action: Value) -> Result<()> {
+        let playlist_id = browse_id.strip_prefix("VL").unwrap_or(browse_id);
+        let body = json!({ "playlistId": playlist_id, "actions": [action] });
+        let response = self.post("browse/edit_playlist", &[], body).await?;
+        match response["status"].as_str() {
+            Some("STATUS_SUCCEEDED") => Ok(()),
+            status => bail!("YouTube refused the change ({})", status.unwrap_or("no status")),
+        }
+    }
+
+    fn require_sign_in(&self, what: &str) -> Result<()> {
+        if !self.is_signed_in() {
+            bail!("sign in to {what}");
+        }
+        Ok(())
+    }
+
     /// Adds a track to, or removes it from, the user's Liked Music.
     pub async fn set_liked(&self, video_id: &str, liked: bool) -> Result<()> {
         if !self.is_signed_in() {
@@ -316,6 +358,7 @@ fn parse_song(item: &Value) -> Option<Track> {
         thumbnail: thumbnail_url(item),
         artist_id,
         album_id,
+        set_video_id: None,
     })
 }
 
@@ -360,6 +403,7 @@ fn parse_panel_video(video: &Value) -> Option<Track> {
     Some(Track {
         artist_id,
         album_id,
+        set_video_id: None,
         video_id,
         title: runs_text(&video["title"]),
         artists: parts.first().copied().unwrap_or_default().to_owned(),
@@ -410,6 +454,9 @@ fn parse_playlist_page(items: &Value) -> (Vec<Track>, Option<String>) {
 /// is in a fixed column. Unavailable tracks have no video id and are skipped.
 fn parse_playlist_row(item: &Value) -> Option<Track> {
     let video_id = item["playlistItemData"]["videoId"].as_str()?.to_owned();
+    let set_video_id = item["playlistItemData"]["playlistSetVideoId"]
+        .as_str()
+        .map(str::to_owned);
     let album = column_text(item, 2);
     let duration_text = &item["fixedColumns"][0]["musicResponsiveListItemFixedColumnRenderer"]["text"];
     let duration = duration_text["simpleText"]
@@ -421,11 +468,13 @@ fn parse_playlist_row(item: &Value) -> Option<Track> {
         video_id,
         title: column_text(item, 0),
         artists: column_text(item, 1),
-        album: (!album.is_empty()).then_some(album),
+        // Curated playlists put a play count where the album usually is.
+        album: (!album.is_empty() && !album.ends_with(" plays") && !album.ends_with(" views")).then_some(album),
         duration: parse_duration(&duration),
         thumbnail: thumbnail_url(item),
         artist_id,
         album_id,
+        set_video_id,
     })
 }
 
@@ -523,6 +572,7 @@ mod tests {
                     thumbnail: Some("https://lh3.googleusercontent.com/t=w120-h120".into()),
                     artist_id: None,
                     album_id: None,
+                    set_video_id: None,
                 },
                 Track {
                     video_id: "abc".into(),
@@ -533,6 +583,7 @@ mod tests {
                     thumbnail: None,
                     artist_id: None,
                     album_id: None,
+                    set_video_id: None,
                 },
             ]
         );
@@ -545,7 +596,7 @@ mod tests {
             "fixedColumns": [{ "musicResponsiveListItemFixedColumnRenderer": { "text": { "runs": [{ "text": duration }] } } }],
         });
         if let Some(id) = video_id {
-            row["playlistItemData"] = json!({ "videoId": id, "playlistSetVideoId": "x" });
+            row["playlistItemData"] = json!({ "videoId": id, "playlistSetVideoId": format!("set-{id}") });
         }
         json!({ "musicResponsiveListItemRenderer": row })
     }
@@ -571,6 +622,7 @@ mod tests {
                     thumbnail: None,
                     artist_id: None,
                     album_id: None,
+                    set_video_id: Some("set-v1".into()),
                 },
                 Track {
                     video_id: "v2".into(),
@@ -581,6 +633,7 @@ mod tests {
                     thumbnail: None,
                     artist_id: None,
                     album_id: None,
+                    set_video_id: Some("set-v2".into()),
                 },
             ]
         );
@@ -593,6 +646,16 @@ mod tests {
         assert_eq!(tracks.len(), 1);
         assert_eq!(next, None);
         assert_eq!(parse_playlist_page(&Value::Null), (vec![], None));
+    }
+
+    #[test]
+    fn a_play_count_is_not_an_album() {
+        let (tracks, _) = parse_playlist_page(&json!([
+            playlist_row(Some("v"), "Fireside Reflections", "lofi geek", "92K plays", "3:03"),
+            playlist_row(Some("w"), "Clip", "Someone", "1.2M views", "2:00"),
+        ]));
+        assert_eq!(tracks[0].album, None);
+        assert_eq!(tracks[1].album, None);
     }
 
     #[test]
@@ -663,6 +726,7 @@ mod tests {
                     thumbnail: Some("big".into()),
                     artist_id: None,
                     album_id: None,
+                    set_video_id: None,
                 },
                 Track {
                     video_id: "b".into(),
@@ -673,6 +737,7 @@ mod tests {
                     thumbnail: Some("big".into()),
                     artist_id: None,
                     album_id: None,
+                    set_video_id: None,
                 },
             ]
         );

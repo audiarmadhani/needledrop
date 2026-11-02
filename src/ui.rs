@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, LineGauge, List, ListItem, Paragraph, Row, Table};
+use ratatui::widgets::{Block, BorderType, Clear, LineGauge, List, ListItem, ListState, Paragraph, Row, Table};
 
 use unicode_width::UnicodeWidthStr;
 
@@ -49,6 +49,85 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     }
     render_now_playing(app, frame, now_playing);
     render_footer(app, frame, footer);
+    if app.picker.is_some() {
+        render_picker(app, frame);
+    }
+}
+
+/// The add-to-playlist dialog, centered over everything.
+fn render_picker(app: &App, frame: &mut Frame) {
+    let Some(picker) = &app.picker else { return };
+    let area = frame.area();
+    let width = 56.min(area.width.saturating_sub(4));
+    let height = (picker.playlists.len() as u16 + 6)
+        .min(area.height.saturating_sub(4))
+        .max(8);
+    let dialog = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, dialog);
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(THEME.accent())
+        .title(Span::styled(" Add to playlist ", THEME.title(true)))
+        .title_bottom(
+            Line::from(if picker.naming.is_some() {
+                vec![
+                    Span::styled(" enter", THEME.accent()),
+                    Span::styled(" create ", THEME.muted()),
+                    Span::styled(" esc", THEME.accent()),
+                    Span::styled(" back ", THEME.muted()),
+                ]
+            } else {
+                vec![
+                    Span::styled(" enter", THEME.accent()),
+                    Span::styled(" add ", THEME.muted()),
+                    Span::styled(" esc", THEME.accent()),
+                    Span::styled(" cancel ", THEME.muted()),
+                ]
+            })
+            .alignment(Alignment::Right),
+        );
+    let inner = block.inner(dialog);
+    frame.render_widget(block, dialog);
+    let [song, _, list] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
+    let song_line = Line::from(vec![
+        Span::styled("♪ ", THEME.accent()),
+        Span::styled(picker.track.title.clone(), THEME.text().add_modifier(Modifier::BOLD)),
+        Span::styled(format!("  {}", picker.track.artists), THEME.muted()),
+    ]);
+    frame.render_widget(Paragraph::new(song_line), song);
+
+    if let Some(name) = &picker.naming {
+        let field = Line::from(vec![
+            Span::styled("New playlist name: ", THEME.muted()),
+            Span::styled(name.clone(), THEME.text()),
+        ]);
+        frame.render_widget(Paragraph::new(field), list);
+        let x = list.x + "New playlist name: ".len() as u16 + name.width() as u16;
+        frame.set_cursor_position(Position::new(x.min(list.right().saturating_sub(1)), list.y));
+        return;
+    }
+    let new = ListItem::new(Line::from(vec![
+        Span::styled("+ ", THEME.accent()),
+        Span::styled("New playlist", THEME.text()),
+    ]));
+    let items = std::iter::once(new).chain(picker.playlists.iter().map(|playlist| {
+        // "Audi Armadhani • 123 tracks" → "123 tracks"
+        let count = playlist.subtitle.rsplit(" • ").next().unwrap_or_default().to_owned();
+        ListItem::new(Line::from(vec![
+            Span::styled("≡ ", THEME.muted()),
+            Span::styled(playlist.title.clone(), THEME.text()),
+            Span::styled(format!("  {count}"), THEME.muted()),
+        ]))
+    }));
+    let mut state = ListState::default();
+    state.select(Some(picker.selected));
+    frame.render_stateful_widget(List::new(items).highlight_style(THEME.selection()), list, &mut state);
 }
 
 /// Library and queue widths. Lyrics need room more than the side panels
@@ -522,11 +601,11 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         ],
         Focus::Tracks => &[
             ("enter", "play"),
-            ("a", "queue"),
+            ("a/N", "queue/next"),
+            ("P", "playlist"),
             ("/", "search"),
             ("space", "pause"),
             ("n/p", "next/prev"),
-            ("←/→", "seek"),
             ("s", "shuffle"),
             ("r", "repeat"),
             ("f", "like"),
@@ -540,11 +619,14 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         ],
         Focus::Queue => &[
             ("enter", "play"),
+            ("J/K", "move"),
+            ("N", "next"),
             ("d", "remove"),
+            ("X", "clear"),
+            ("P", "playlist"),
             ("R", "radio"),
             ("space", "pause"),
             ("n/p", "next/prev"),
-            ("←/→", "seek"),
             ("L", "lyrics"),
             ("M", "minimal"),
             ("q", "quit"),

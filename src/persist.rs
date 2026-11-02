@@ -179,6 +179,7 @@ mod tests {
             thumbnail: None,
             artist_id: None,
             album_id: None,
+            set_video_id: None,
         };
         let session = |queue: Vec<Track>, current| Session {
             queue,
@@ -205,6 +206,7 @@ mod tests {
                 thumbnail: Some("https://t".into()),
                 artist_id: None,
                 album_id: None,
+                set_video_id: None,
             }],
             current: Some(0),
             position: 61.5,

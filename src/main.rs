@@ -17,6 +17,7 @@ mod pages;
 mod palette;
 mod persist;
 mod player;
+mod queue;
 mod retro;
 mod streams;
 mod theme;

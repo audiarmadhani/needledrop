@@ -57,6 +57,13 @@ pub enum Event {
         video_id: String,
         result: Result<String, String>,
     },
+    /// A message for the footer from a background task (a playlist edit).
+    Notice(String),
+    /// A new playlist exists: show it in the library.
+    PlaylistCreated {
+        message: String,
+        playlist: Playlist,
+    },
     /// A card's cover (`None` if it couldn't be fetched).
     Thumbnail {
         url: String,
