@@ -12,15 +12,25 @@ use anyhow::{Result, bail};
 use serde_json::{Value, json};
 
 use crate::auth::{Credentials, ORIGIN};
-use crate::model::{Playlist, Track};
+use crate::browse;
+use crate::model::{Album, Artist, Item, Playlist, Shelf, Track};
 
 const ENDPOINT: &str = "https://music.youtube.com/youtubei/v1";
 const CLIENT_NAME: &str = "WEB_REMIX";
 const CLIENT_VERSION: &str = "1.20251020.01.00";
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
                           (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
-/// Search `params` value that restricts results to songs.
-const SONGS_FILTER: &str = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
+/// Search `params` values that restrict results to one kind, from the filter
+/// chips YouTube Music's own search shows.
+const SONGS_FILTER: &str = "EgWKAQIIAWoSEAUQAxAEEAkQEBAKEA4QFRAR";
+const ALBUMS_FILTER: &str = "EgWKAQIYAWoSEAUQAxAEEAkQEBAKEA4QFRAR";
+const ARTISTS_FILTER: &str = "EgWKAQIgAWoSEAUQAxAEEAkQEBAKEA4QFRAR";
+const PLAYLISTS_FILTER: &str = "EgeKAQQoADgBahIQBRADEAQQCRAQEAoQDhAVEBE=";
+/// Pages of a mix or radio to load (100 songs each). They're endless and slow
+/// to page through, and autoplay carries on past the end anyway.
+const MAX_MIX_PAGES: usize = 1;
+/// Home loads a few pages of shelves; it goes on far longer than anyone scrolls.
+const HOME_PAGES: usize = 4;
 /// Upper bound on continuation pages followed per request (100 tracks each).
 const MAX_PAGES: usize = 100;
 
@@ -65,11 +75,81 @@ impl Client {
         self.credentials.is_some()
     }
 
-    pub async fn search_songs(&self, query: &str) -> Result<Vec<Track>> {
-        let response = self
-            .post("search", &[], json!({ "query": query, "params": SONGS_FILTER }))
-            .await?;
-        Ok(parse_search(&response))
+    /// Songs, albums, artists, and playlists matching `query`, as shelves,
+    /// from four filtered searches run side by side.
+    pub async fn search(&self, query: &str) -> Result<Vec<Shelf>> {
+        let filtered = |params: &'static str| async move {
+            let response = self
+                .post("search", &[], json!({ "query": query, "params": params }))
+                .await?;
+            Ok::<_, anyhow::Error>(response)
+        };
+        let (songs, albums, artists, playlists) = tokio::try_join!(
+            filtered(SONGS_FILTER),
+            filtered(ALBUMS_FILTER),
+            filtered(ARTISTS_FILTER),
+            filtered(PLAYLISTS_FILTER),
+        )?;
+        let rows = |response: &Value| -> Vec<Item> {
+            response["contents"]["tabbedSearchResultsRenderer"]["tabs"][0]["tabRenderer"]["content"]
+                ["sectionListRenderer"]["contents"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|section| section["musicShelfRenderer"]["contents"].as_array())
+                .flatten()
+                .filter_map(|row| browse::parse_row(&row["musicResponsiveListItemRenderer"]))
+                .collect()
+        };
+        let shelves = [
+            ("Songs", parse_search(&songs).into_iter().map(Item::Song).collect()),
+            ("Albums", rows(&albums)),
+            ("Artists", rows(&artists)),
+            ("Playlists", rows(&playlists)),
+        ];
+        Ok(shelves
+            .into_iter()
+            .filter(|(_, items): &(&str, Vec<Item>)| !items.is_empty())
+            .map(|(title, items)| Shelf {
+                title: title.to_owned(),
+                items,
+            })
+            .collect())
+    }
+
+    /// The Home feed: personalized shelves like "Quick picks" and mixes.
+    pub async fn home(&self) -> Result<Vec<Shelf>> {
+        let response = self.post("browse", &[], json!({ "browseId": "FEmusic_home" })).await?;
+        let (mut shelves, mut token) = browse::parse_home_page(
+            &response["contents"]["singleColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]["content"]["sectionListRenderer"],
+        );
+        for _ in 1..HOME_PAGES {
+            let Some(next) = token.take() else { break };
+            let query = [
+                ("ctoken", next.as_str()),
+                ("continuation", next.as_str()),
+                ("type", "next"),
+            ];
+            let response = self.post("browse", &query, json!({})).await?;
+            let (more, next) = browse::parse_home_page(&response["continuationContents"]["sectionListContinuation"]);
+            shelves.extend(more);
+            token = next;
+        }
+        Ok(shelves)
+    }
+
+    pub async fn artist(&self, browse_id: &str) -> Result<Artist> {
+        let response = self.post("browse", &[], json!({ "browseId": browse_id })).await?;
+        Ok(browse::parse_artist(&response))
+    }
+
+    pub async fn album(&self, browse_id: &str) -> Result<Album> {
+        let response = self.post("browse", &[], json!({ "browseId": browse_id })).await?;
+        let mut album = browse::parse_album(&response);
+        for track in &mut album.tracks {
+            track.album_id.get_or_insert_with(|| browse_id.to_owned());
+        }
+        Ok(album)
     }
 
     /// The signed-in account, or `None` if YouTube treats the request as
@@ -95,9 +175,10 @@ impl Client {
         let mut response = self
             .post("browse", &[], json!({ "browseId": "FEmusic_liked_playlists" }))
             .await?;
-        let mut grid = response["contents"]["singleColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]
-            ["content"]["sectionListRenderer"]["contents"][0]["gridRenderer"]
-            .take();
+        let mut grid = take_at(
+            &mut response,
+            "/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/gridRenderer",
+        );
         let mut playlists = Vec::new();
         for _ in 0..MAX_PAGES {
             playlists.extend(parse_grid_playlists(&grid));
@@ -106,7 +187,7 @@ impl Client {
             };
             let query = [("ctoken", token), ("continuation", token), ("type", "next")];
             let mut response = self.post("browse", &query, json!({})).await?;
-            grid = response["continuationContents"]["gridContinuation"].take();
+            grid = take_at(&mut response, "/continuationContents/gridContinuation");
         }
         Ok(playlists)
     }
@@ -114,17 +195,26 @@ impl Client {
     /// Every playable track in a playlist, following pagination.
     pub async fn playlist_tracks(&self, browse_id: &str) -> Result<Vec<Track>> {
         let mut response = self.post("browse", &[], json!({ "browseId": browse_id })).await?;
-        let mut items = response["contents"]["twoColumnBrowseResultsRenderer"]["secondaryContents"]
-            ["sectionListRenderer"]["contents"][0]["musicPlaylistShelfRenderer"]["contents"]
-            .take();
+        let mut items = take_at(
+            &mut response,
+            "/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents/0/musicPlaylistShelfRenderer/contents",
+        );
+        // Mixes and radios (`RD…`) never run out; stop after a few hundred songs.
+        let pages = if browse_id.trim_start_matches("VL").starts_with("RD") {
+            MAX_MIX_PAGES
+        } else {
+            MAX_PAGES
+        };
         let mut tracks = Vec::new();
-        for _ in 0..MAX_PAGES {
+        for _ in 0..pages {
             let (page, next) = parse_playlist_page(&items);
             tracks.extend(page);
             let Some(token) = next else { break };
             response = self.post("browse", &[], json!({ "continuation": token })).await?;
-            items =
-                response["onResponseReceivedActions"][0]["appendContinuationItemsAction"]["continuationItems"].take();
+            items = take_at(
+                &mut response,
+                "/onResponseReceivedActions/0/appendContinuationItemsAction/continuationItems",
+            );
         }
         Ok(tracks)
     }
@@ -216,6 +306,7 @@ fn parse_song(item: &Value) -> Option<Track> {
     let artists = parts.next().unwrap_or_default().to_owned();
     let album = parts.next().map(str::to_owned);
 
+    let (artist_id, album_id) = browse::links(item);
     Some(Track {
         video_id,
         title,
@@ -223,6 +314,8 @@ fn parse_song(item: &Value) -> Option<Track> {
         album,
         duration,
         thumbnail: thumbnail_url(item),
+        artist_id,
+        album_id,
     })
 }
 
@@ -263,7 +356,10 @@ fn parse_panel_video(video: &Value) -> Option<Track> {
     let video_id = video["videoId"].as_str()?.to_owned();
     let byline = runs_text(&video["longBylineText"]);
     let parts: Vec<&str> = byline.split(" • ").collect();
+    let (artist_id, album_id) = browse::links(&video["longBylineText"]);
     Some(Track {
+        artist_id,
+        album_id,
         video_id,
         title: runs_text(&video["title"]),
         artists: parts.first().copied().unwrap_or_default().to_owned(),
@@ -320,6 +416,7 @@ fn parse_playlist_row(item: &Value) -> Option<Track> {
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| runs_text(duration_text));
+    let (artist_id, album_id) = browse::links(item);
     Some(Track {
         video_id,
         title: column_text(item, 0),
@@ -327,11 +424,20 @@ fn parse_playlist_row(item: &Value) -> Option<Track> {
         album: (!album.is_empty()).then_some(album),
         duration: parse_duration(&duration),
         thumbnail: thumbnail_url(item),
+        artist_id,
+        album_id,
     })
 }
 
 /// The largest thumbnail offered for a result row.
-fn thumbnail_url(item: &Value) -> Option<String> {
+/// Moves the value at JSON `pointer` out of `value`, or `Null` when the path
+/// isn't there. (Indexing a missing array element mutably panics, and a
+/// response shaped unexpectedly must never take the app down.)
+fn take_at(value: &mut Value, pointer: &str) -> Value {
+    value.pointer_mut(pointer).map(Value::take).unwrap_or_default()
+}
+
+pub(crate) fn thumbnail_url(item: &Value) -> Option<String> {
     item["thumbnail"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"]
         .as_array()?
         .last()?["url"]
@@ -339,11 +445,11 @@ fn thumbnail_url(item: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn column_text(item: &Value, column: usize) -> String {
+pub(crate) fn column_text(item: &Value, column: usize) -> String {
     runs_text(&item["flexColumns"][column]["musicResponsiveListItemFlexColumnRenderer"]["text"])
 }
 
-fn runs_text(text: &Value) -> String {
+pub(crate) fn runs_text(text: &Value) -> String {
     text["runs"]
         .as_array()
         .into_iter()
@@ -353,7 +459,7 @@ fn runs_text(text: &Value) -> String {
 }
 
 /// Parses `m:ss` or `h:mm:ss`.
-fn parse_duration(text: &str) -> Option<Duration> {
+pub(crate) fn parse_duration(text: &str) -> Option<Duration> {
     if !text.contains(':') {
         return None;
     }
@@ -415,6 +521,8 @@ mod tests {
                     album: Some("In Rainbows".into()),
                     duration: Some(Duration::from_secs(319)),
                     thumbnail: Some("https://lh3.googleusercontent.com/t=w120-h120".into()),
+                    artist_id: None,
+                    album_id: None,
                 },
                 Track {
                     video_id: "abc".into(),
@@ -423,6 +531,8 @@ mod tests {
                     album: Some("Single".into()),
                     duration: Some(Duration::from_secs(3723)),
                     thumbnail: None,
+                    artist_id: None,
+                    album_id: None,
                 },
             ]
         );
@@ -459,6 +569,8 @@ mod tests {
                     album: Some("Postcards From Molde".into()),
                     duration: Some(Duration::from_secs(141)),
                     thumbnail: None,
+                    artist_id: None,
+                    album_id: None,
                 },
                 Track {
                     video_id: "v2".into(),
@@ -467,6 +579,8 @@ mod tests {
                     album: None,
                     duration: Some(Duration::from_secs(180)),
                     thumbnail: None,
+                    artist_id: None,
+                    album_id: None,
                 },
             ]
         );
@@ -547,6 +661,8 @@ mod tests {
                     album: Some("Album".into()),
                     duration: Some(Duration::from_secs(319)),
                     thumbnail: Some("big".into()),
+                    artist_id: None,
+                    album_id: None,
                 },
                 Track {
                     video_id: "b".into(),
@@ -555,9 +671,33 @@ mod tests {
                     album: None,
                     duration: Some(Duration::from_secs(180)),
                     thumbnail: Some("big".into()),
+                    artist_id: None,
+                    album_id: None,
                 },
             ]
         );
+    }
+
+    #[test]
+    fn take_at_tolerates_missing_paths() {
+        let mut response =
+            json!({ "onResponseReceivedActions": [{ "appendContinuationItemsAction": { "continuationItems": [1] } }] });
+        assert_eq!(
+            take_at(
+                &mut response,
+                "/onResponseReceivedActions/0/appendContinuationItemsAction/continuationItems"
+            ),
+            json!([1])
+        );
+        let mut end_of_mix = json!({ "responseContext": {} });
+        assert_eq!(
+            take_at(
+                &mut end_of_mix,
+                "/onResponseReceivedActions/0/appendContinuationItemsAction/continuationItems"
+            ),
+            Value::Null
+        );
+        assert_eq!(parse_playlist_page(&Value::Null), (vec![], None));
     }
 
     #[test]

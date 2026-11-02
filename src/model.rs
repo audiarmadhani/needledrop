@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Track {
     pub video_id: String,
     pub title: String,
@@ -10,6 +10,12 @@ pub struct Track {
     pub album: Option<String>,
     pub duration: Option<Duration>,
     pub thumbnail: Option<String>,
+    /// Browse id of the (first) artist's page, `UC…`.
+    #[serde(default)]
+    pub artist_id: Option<String>,
+    /// Browse id of the album's page, `MPREb_…`.
+    #[serde(default)]
+    pub album_id: Option<String>,
 }
 
 impl Track {
@@ -25,4 +31,65 @@ pub struct Playlist {
     pub browse_id: String,
     pub title: String,
     pub subtitle: String,
+}
+
+/// Something on a Home, artist, or search page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Item {
+    Song(Track),
+    Album {
+        browse_id: String,
+        title: String,
+        subtitle: String,
+    },
+    Artist {
+        browse_id: String,
+        name: String,
+        subtitle: String,
+    },
+    Playlist {
+        browse_id: String,
+        title: String,
+        subtitle: String,
+    },
+}
+
+impl Item {
+    pub fn title(&self) -> &str {
+        match self {
+            Item::Song(track) => &track.title,
+            Item::Album { title, .. } | Item::Playlist { title, .. } => title,
+            Item::Artist { name, .. } => name,
+        }
+    }
+
+    pub fn subtitle(&self) -> String {
+        match self {
+            Item::Song(track) => track.artists.clone(),
+            Item::Album { subtitle, .. } | Item::Artist { subtitle, .. } | Item::Playlist { subtitle, .. } => {
+                subtitle.clone()
+            }
+        }
+    }
+}
+
+/// A titled row of items, like "Quick picks" or "Albums".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shelf {
+    pub title: String,
+    pub items: Vec<Item>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Album {
+    pub title: String,
+    /// e.g. "Olivia Dean · Album • 2025 · 12 songs • 34 minutes"
+    pub subtitle: String,
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Artist {
+    pub name: String,
+    pub shelves: Vec<Shelf>,
 }

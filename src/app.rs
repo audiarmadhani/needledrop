@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use anyhow::{Result, bail};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::widgets::{ListState, TableState};
+use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::{self, Account};
@@ -12,7 +12,8 @@ use crate::art::{self, AlbumArt};
 use crate::event::Event;
 use crate::lyrics::{self, Lyrics};
 use crate::media::{self, Command};
-use crate::model::{Playlist, Track};
+use crate::model::{Item, Playlist, Track};
+use crate::pages::{Loaded, Nav, Page};
 use crate::palette::Palette;
 use crate::persist::{Session, Settings};
 use crate::player::{Player, PlayerEvent};
@@ -69,14 +70,6 @@ impl Library {
             _ => &[],
         }
     }
-}
-
-/// The middle pane: search results or a playlist's tracks.
-pub struct TrackList {
-    pub title: String,
-    pub tracks: Vec<Track>,
-    pub state: TableState,
-    pub loading: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -156,7 +149,8 @@ pub struct App {
     pub library_state: ListState,
     /// Video ids in Liked Music, to show hearts and toggle likes.
     pub liked: HashSet<String>,
-    pub list: TrackList,
+    /// The middle pane's pages: Home, playlists, albums, artists, search.
+    pub nav: Nav,
     pub queue: Vec<Track>,
     pub queue_state: ListState,
     /// Index into `queue` of the track loaded in mpv.
@@ -229,12 +223,7 @@ impl App {
             },
             library_state: ListState::default(),
             liked: HashSet::new(),
-            list: TrackList {
-                title: "tracks".into(),
-                tracks: Vec::new(),
-                state: TableState::default(),
-                loading: false,
-            },
+            nav: Nav::default(),
             queue: Vec::new(),
             queue_state: ListState::default(),
             current: None,
@@ -276,6 +265,8 @@ impl App {
         if signed_in {
             app.load_library();
         }
+        // Home works signed out too (with general picks rather than yours).
+        app.open_home();
         app
     }
 
@@ -412,24 +403,28 @@ impl App {
                 self.account = account;
                 self.library = match result {
                     Ok(playlists) => {
-                        self.library_state.select((!playlists.is_empty()).then_some(0));
+                        self.library_state
+                            .select(Some(self.library_state.selected().unwrap_or(0)));
                         Library::Loaded(playlists)
                     }
                     Err(error) => Library::Failed(error),
                 };
             }
-            Event::Tracks { request, result } => {
-                if request != self.request {
+            Event::Page { request, result } => {
+                let Some(page) = self.nav.waiting_for(request) else {
                     return Ok(());
-                }
-                self.list.loading = false;
+                };
                 match result {
-                    Ok(tracks) => {
-                        self.status = tracks.is_empty().then(|| format!("No tracks in {}", self.list.title));
-                        self.list.state.select((!tracks.is_empty()).then_some(0));
-                        self.list.tracks = tracks;
+                    Ok(loaded) => {
+                        page.fill(loaded);
+                        if page.is_empty() {
+                            self.status = Some(format!("Nothing in {}", page.title));
+                        }
                     }
-                    Err(error) => self.status = Some(format!("Couldn't load {}: {error}", self.list.title)),
+                    Err(error) => {
+                        page.loading = false;
+                        self.status = Some(format!("Couldn't load {}: {error}", page.title));
+                    }
                 }
             }
         }
@@ -565,6 +560,9 @@ impl App {
             }
             KeyCode::Char('g') | KeyCode::Home => self.move_selection(isize::MIN),
             KeyCode::Char('G') | KeyCode::End => self.move_selection(isize::MAX),
+            KeyCode::Esc | KeyCode::Backspace if self.focus == Focus::Tracks && !self.show_lyrics => self.nav.back(),
+            KeyCode::Char('i') => self.open_from_track(false),
+            KeyCode::Char('o') => self.open_from_track(true),
             KeyCode::Enter if self.lyrics_have_focus() => {}
             KeyCode::Enter => self.activate_selected().await?,
             KeyCode::Char('a') if self.focus == Focus::Tracks => self.enqueue_selected().await?,
@@ -603,7 +601,7 @@ impl App {
             return self.now_playing();
         }
         match self.focus {
-            Focus::Tracks if !self.show_lyrics => self.list.state.selected().and_then(|i| self.list.tracks.get(i)),
+            Focus::Tracks if !self.show_lyrics => self.nav.current()?.selected_track(),
             Focus::Queue => self.queue_state.selected().and_then(|i| self.queue.get(i)),
             _ => self.now_playing(),
         }
@@ -643,26 +641,42 @@ impl App {
         });
     }
 
-    /// Replaces the track list with whatever `fetch` returns, in the background.
-    fn load_tracks<F, Fut>(&mut self, title: String, fetch: F)
+    /// Opens a page that `fetch` fills in the background. `push`: on top of
+    /// the current page (esc returns); otherwise it starts a new stack.
+    fn open_page<F, Fut>(&mut self, title: String, shelves: bool, push: bool, fetch: F)
     where
         F: FnOnce(api::Client) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<Vec<Track>>> + Send + 'static,
+        Fut: Future<Output = Result<Loaded>> + Send + 'static,
     {
         self.request += 1;
         let request = self.request;
-        self.list = TrackList {
-            title,
-            tracks: Vec::new(),
-            state: TableState::default(),
-            loading: true,
-        };
+        let page = Page::loading(title, request, shelves);
+        if push {
+            self.nav.push(page);
+        } else {
+            self.nav.reset(page);
+        }
+        self.show_lyrics = false;
         self.status = None;
         let api = self.api.clone();
         let events = self.events.clone();
         tokio::spawn(async move {
-            let result = fetch(api).await.map_err(|e| format!("{e:#}"));
-            let _ = events.send(Event::Tracks { request, result });
+            // Run the fetch as its own task, so a panic in it still ends
+            // the page's loading state instead of leaving it spinning.
+            let result = match tokio::spawn(fetch(api)).await {
+                Ok(result) => result.map_err(|e| format!("{e:#}")),
+                Err(_) => Err("something went wrong (details in ~/.local/state/needledrop/errors.log)".to_owned()),
+            };
+            let _ = events.send(Event::Page { request, result });
+        });
+    }
+
+    fn open_home(&mut self) {
+        self.open_page("Home".into(), true, false, |api| async move {
+            Ok(Loaded::Shelves {
+                shelves: api.home().await?,
+                subtitle: None,
+            })
         });
     }
 
@@ -671,16 +685,70 @@ impl App {
         if query.is_empty() {
             return;
         }
-        self.load_tracks(format!("search · {query}"), move |api| async move {
-            api.search_songs(&query).await
+        self.open_page(format!("search · {query}"), true, false, move |api| async move {
+            Ok(Loaded::Shelves {
+                shelves: api.search(&query).await?,
+                subtitle: None,
+            })
         });
     }
 
-    fn open_playlist(&mut self, playlist: Playlist) {
+    fn open_playlist(&mut self, title: String, browse_id: String, push: bool) {
         self.focus = Focus::Tracks;
-        self.load_tracks(playlist.title, move |api| async move {
-            api.playlist_tracks(&playlist.browse_id).await
+        self.open_page(title, false, push, move |api| async move {
+            Ok(Loaded::Tracks {
+                tracks: api.playlist_tracks(&browse_id).await?,
+                subtitle: None,
+            })
         });
+    }
+
+    fn open_album(&mut self, title: String, browse_id: String) {
+        self.focus = Focus::Tracks;
+        self.open_page(title, false, true, move |api| async move {
+            let album = api.album(&browse_id).await?;
+            Ok(Loaded::Tracks {
+                tracks: album.tracks,
+                subtitle: Some(album.subtitle),
+            })
+        });
+    }
+
+    fn open_artist(&mut self, name: String, browse_id: String) {
+        self.focus = Focus::Tracks;
+        self.open_page(name, true, true, move |api| async move {
+            let artist = api.artist(&browse_id).await?;
+            Ok(Loaded::Shelves {
+                shelves: artist.shelves,
+                subtitle: None,
+            })
+        });
+    }
+
+    /// `i` / `o`: the target song's artist or album page.
+    fn open_from_track(&mut self, album: bool) {
+        let Some(track) = self.target_track().cloned() else {
+            return;
+        };
+        let target = if album {
+            track
+                .album_id
+                .map(|id| (track.album.unwrap_or_else(|| "Album".into()), id))
+        } else {
+            track.artist_id.map(|id| (track.artists, id))
+        };
+        match target {
+            Some((title, id)) if album => self.open_album(title, id),
+            Some((name, id)) => self.open_artist(name, id),
+            None => {
+                self.status = Some(format!(
+                    "No {} page for “{}”",
+                    if album { "album" } else { "artist" },
+                    track.title
+                ))
+            }
+        }
+        self.minimal = false;
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -689,13 +757,15 @@ impl App {
         };
         match self.focus {
             Focus::Library => {
-                let len = self.library.playlists().len();
+                // Home sits above the playlists.
+                let len = 1 + self.library.playlists().len();
                 self.library_state.select(step(self.library_state.selected(), len));
             }
-            Focus::Tracks => self
-                .list
-                .state
-                .select(step(self.list.state.selected(), self.list.tracks.len())),
+            Focus::Tracks => {
+                if let Some(page) = self.nav.current_mut() {
+                    page.move_selection(delta);
+                }
+            }
             Focus::Queue => self
                 .queue_state
                 .select(step(self.queue_state.selected(), self.queue.len())),
@@ -703,25 +773,43 @@ impl App {
         }
     }
 
-    /// Library: open the playlist. Tracks: replace the queue with the list
-    /// and play from the selection. Queue: jump to the selection.
+    /// Library: open Home or the playlist. Tracks: play the song (queueing
+    /// its list or shelf) or open the album, artist, or playlist. Queue: jump
+    /// to the selection.
     async fn activate_selected(&mut self) -> Result<()> {
         match self.focus {
             Focus::Library => {
-                let selected = self
-                    .library_state
-                    .selected()
-                    .and_then(|i| self.library.playlists().get(i));
-                if let Some(playlist) = selected.cloned() {
-                    self.open_playlist(playlist);
+                match self.library_state.selected() {
+                    Some(0) | None => self.open_home(),
+                    Some(i) => {
+                        if let Some(playlist) = self.library.playlists().get(i - 1).cloned() {
+                            self.open_playlist(playlist.title, playlist.browse_id, false);
+                        }
+                    }
                 }
                 Ok(())
             }
             Focus::Tracks => {
-                let Some(index) = self.list.state.selected() else {
+                let Some(page) = self.nav.current() else { return Ok(()) };
+                match page.selected_item().cloned() {
+                    Some(Item::Album { browse_id, title, .. }) => {
+                        self.open_album(title, browse_id);
+                        return Ok(());
+                    }
+                    Some(Item::Artist { browse_id, name, .. }) => {
+                        self.open_artist(name, browse_id);
+                        return Ok(());
+                    }
+                    Some(Item::Playlist { browse_id, title, .. }) => {
+                        self.open_playlist(title, browse_id, true);
+                        return Ok(());
+                    }
+                    Some(Item::Song(_)) | None => {}
+                }
+                let Some((tracks, index)) = page.queue_from_selection() else {
                     return Ok(());
                 };
-                self.replace_queue(self.list.tracks.clone());
+                self.replace_queue(tracks);
                 if self.shuffle {
                     // Start with the chosen track, then the rest in random order.
                     self.queue.swap(0, index);
@@ -741,7 +829,7 @@ impl App {
     }
 
     async fn enqueue_selected(&mut self) -> Result<()> {
-        let Some(track) = self.list.state.selected().and_then(|i| self.list.tracks.get(i)) else {
+        let Some(track) = self.nav.current().and_then(|page| page.selected_track()) else {
             return Ok(());
         };
         self.status = Some(format!("Queued “{}”", track.title));

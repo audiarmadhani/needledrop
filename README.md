@@ -4,6 +4,8 @@
 
 A good-looking terminal client for YouTube Music, written in Rust.
 
+- Home: your Quick picks, mixes, Listen again, and recommendations
+- Artist and album pages, and search across songs, albums, artists, and playlists
 - Your YouTube Music library: Liked Music and playlists, with likes you can toggle
 - Search, a queue with shuffle and repeat, and endless autoplay (radio) when the queue runs out
 - Album covers as 8-bit pixel art, in your terminal theme's colors or the PICO-8, Game Boy, or C64 palettes
@@ -73,7 +75,9 @@ Without signing in, search and playback still work.
 |---|---|
 | `tab` / `shift-tab` | Move between library, tracks, and queue |
 | `j` / `k`, `g` / `G` | Move, jump to top or bottom |
-| `enter` | Open a playlist; play a track (replaces the queue with the list) |
+| `enter` | Play a song (queueing its list or shelf), or open an album, artist, or playlist |
+| `esc` / `backspace` | Back to the previous page |
+| `i` / `o` | Open the selected (or playing) song's artist / album |
 | `/` | Search |
 | `a` | Add the selected track to the queue |
 | `d` | Remove the selected track from the queue |

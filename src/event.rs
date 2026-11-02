@@ -5,6 +5,7 @@ use crate::api::Account;
 use crate::lyrics::Lyrics;
 use crate::media;
 use crate::model::{Playlist, Track};
+use crate::pages::Loaded;
 use crate::palette::Palette;
 use crate::player::PlayerEvent;
 
@@ -24,11 +25,10 @@ pub enum Event {
         account: Option<Account>,
         result: Result<Vec<Playlist>, String>,
     },
-    /// Tracks for the track list (search results or a playlist). `request`
-    /// identifies which load this answers, so stale responses are dropped.
-    Tracks {
+    /// Content for the page waiting on load `request` (see `pages::Nav`).
+    Page {
         request: u64,
-        result: Result<Vec<Track>, String>,
+        result: Result<Loaded, String>,
     },
     /// A radio for the queue. `request` identifies which radio load this
     /// answers; `replace` says whether it replaces the queue or extends it.

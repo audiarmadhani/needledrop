@@ -10,6 +10,8 @@ use crate::app::{App, Focus, Library, LyricsState, Repeat};
 use crate::art::PixelArt;
 use crate::lyrics::Lyrics;
 use crate::minimal;
+use crate::model::Item;
+use crate::pages::{Content, Row as PageRow};
 use crate::theme::Theme;
 use crate::visualizer::Visual;
 
@@ -173,11 +175,13 @@ fn render_library(app: &mut App, frame: &mut Frame, area: Rect) {
         frame.render_widget(paragraph.block(block), area);
         return;
     }
-    let items = app
-        .library
-        .playlists()
-        .iter()
-        .map(|playlist| ListItem::new(playlist.title.as_str()));
+    let home = ListItem::new(Line::from(vec![Span::styled("⌂ ", THEME.accent()), Span::raw("Home")]));
+    let items = std::iter::once(home).chain(
+        app.library
+            .playlists()
+            .iter()
+            .map(|playlist| ListItem::new(playlist.title.as_str())),
+    );
     let list = List::new(items)
         .block(block)
         .highlight_style(if focused { THEME.selection() } else { Style::new() });
@@ -272,21 +276,36 @@ fn render_tracks(app: &mut App, frame: &mut Frame, area: Rect) {
         return render_lyrics(app, frame, area);
     }
     let focused = app.focus == Focus::Tracks;
+    let can_go_back = app.nav.can_go_back();
     let playing_id = app.current.and_then(|i| app.queue.get(i)).map(|t| t.video_id.as_str());
-    let list = &mut app.list;
-    let title = if list.loading {
-        format!("{} · loading…", list.title)
-    } else {
-        format!("{} · {}", list.title, list.tracks.len())
+    let liked = &app.liked;
+    let Some(page) = app.nav.current_mut() else {
+        let block = panel("tracks", focused);
+        frame.render_widget(block, area);
+        return;
     };
-    let block = panel(title, focused);
+    let count = match &page.content {
+        Content::Tracks { tracks, .. } => format!(" · {}", tracks.len()),
+        Content::Shelves { .. } => String::new(),
+    };
+    let title = if page.loading {
+        format!("{} · loading…", page.title)
+    } else {
+        format!("{}{count}", page.title)
+    };
+    let mut block = panel(title, focused);
+    if let Some(subtitle) = &page.subtitle {
+        block = block.title(Line::styled(format!(" {subtitle} "), THEME.muted()).alignment(Alignment::Right));
+    }
+    if can_go_back {
+        block = block.title_bottom(Line::from(vec![
+            Span::styled(" esc", THEME.accent()),
+            Span::styled(" back ", THEME.muted()),
+        ]));
+    }
 
-    if list.tracks.is_empty() {
-        let hint = if list.loading {
-            "Loading…"
-        } else {
-            "Pick a playlist, or press / to search"
-        };
+    if page.is_empty() {
+        let hint = if page.loading { "Loading…" } else { "Nothing here" };
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let [_, middle, _] =
@@ -298,8 +317,31 @@ fn render_tracks(app: &mut App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    let liked = &app.liked;
-    let rows = list.tracks.iter().map(|track| {
+    let highlight = if focused { THEME.selection() } else { Style::new() };
+    let (tracks, state) = match &mut page.content {
+        Content::Tracks { tracks, state } => (tracks, state),
+        Content::Shelves { shelves, rows, state } => {
+            let items = rows.iter().map(|row| match *row {
+                PageRow::Heading(s) => {
+                    let heading = Line::styled(shelves[s].title.clone(), THEME.accent().add_modifier(Modifier::BOLD));
+                    // A blank line above every heading but the first.
+                    if s == 0 {
+                        ListItem::new(heading)
+                    } else {
+                        ListItem::new(vec![Line::raw(""), heading])
+                    }
+                }
+                PageRow::Item(s, i) => shelf_item(&shelves[s].items[i], playing_id, liked),
+            });
+            let list = List::new(items.collect::<Vec<_>>())
+                .block(block)
+                .highlight_style(highlight);
+            frame.render_stateful_widget(list, area, state);
+            return;
+        }
+    };
+
+    let rows = tracks.iter().map(|track| {
         let is_playing = playing_id == Some(track.video_id.as_str());
         let marker = if is_playing {
             Span::styled("▶", Style::new().fg(THEME.playing))
@@ -341,8 +383,38 @@ fn render_tracks(app: &mut App, frame: &mut Frame, area: Rect) {
     .header(header)
     .column_spacing(2)
     .block(block)
-    .row_highlight_style(if focused { THEME.selection() } else { Style::new() });
-    frame.render_stateful_widget(table, area, &mut list.state);
+    .row_highlight_style(highlight);
+    frame.render_stateful_widget(table, area, state);
+}
+
+/// One line on a shelves page: a symbol for the kind of item, its title, and
+/// a dimmed detail (artists, year, followers).
+fn shelf_item(item: &Item, playing_id: Option<&str>, liked: &std::collections::HashSet<String>) -> ListItem<'static> {
+    let (symbol, extra) = match item {
+        Item::Song(track) => ("♪", Some(heart(liked.contains(&track.video_id)))),
+        Item::Album { .. } => ("◉", None),
+        Item::Artist { .. } => ("◆", None),
+        Item::Playlist { .. } => ("☰", None),
+    };
+    let playing = matches!(item, Item::Song(t) if playing_id == Some(t.video_id.as_str()));
+    let title_style = if playing {
+        Style::new().fg(THEME.playing)
+    } else {
+        THEME.text()
+    };
+    let mut spans = vec![
+        Span::styled(format!("  {symbol}  "), THEME.accent()),
+        Span::styled(item.title().to_owned(), title_style),
+    ];
+    if let Some(heart) = extra {
+        spans.push(Span::raw(" "));
+        spans.push(heart);
+    }
+    let subtitle = item.subtitle();
+    if !subtitle.is_empty() {
+        spans.push(Span::styled(format!("  {subtitle}"), THEME.muted()));
+    }
+    ListItem::new(Line::from(spans))
 }
 
 fn render_queue(app: &mut App, frame: &mut Frame, area: Rect) {
@@ -493,6 +565,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             ("s", "shuffle"),
             ("r", "repeat"),
             ("f", "like"),
+            ("i/o", "artist/album"),
             ("R", "radio"),
             ("L", "lyrics"),
             ("M", "minimal"),

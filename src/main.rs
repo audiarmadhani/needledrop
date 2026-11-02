@@ -2,6 +2,7 @@ mod api;
 mod app;
 mod art;
 mod auth;
+mod browse;
 mod event;
 mod lyrics;
 #[cfg(target_os = "macos")]
@@ -9,6 +10,7 @@ mod macos_app;
 mod media;
 mod minimal;
 mod model;
+mod pages;
 mod palette;
 mod persist;
 mod player;
@@ -199,6 +201,7 @@ async fn tui(
     let player = Player::spawn(events.clone()).await?;
 
     let mut terminal = ratatui::init();
+    contain_background_panics();
     let mut app = App::new(api, player, media, persist::Settings::load(), events.clone());
     app.restore(persist::Session::load()).await?;
     palette::watch(events.clone());
@@ -213,6 +216,24 @@ async fn tui(
 }
 
 const FRAME: std::time::Duration = std::time::Duration::from_millis(33);
+
+/// ratatui's panic hook restores the terminal on any panic, so a bug in a
+/// background task (a response shaped in a way the parser didn't expect)
+/// would blank the screen while needledrop kept running. Background tasks
+/// only log; the task's own failure is reported where it was awaited.
+fn contain_background_panics() {
+    let restore_terminal = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let background = std::thread::current()
+            .name()
+            .is_some_and(|name| name.starts_with("tokio-rt-worker"));
+        if background {
+            persist::log_error(&format!("background task panicked: {info}"));
+        } else {
+            restore_terminal(info);
+        }
+    }));
+}
 
 /// A closed terminal window or a `kill` sends SIGHUP or SIGTERM, which would
 /// end the process on the spot. Turn them into a normal quit, so the session

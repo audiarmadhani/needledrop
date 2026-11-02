@@ -76,6 +76,24 @@ impl Session {
     }
 }
 
+/// Appends a line to `$XDG_STATE_HOME/needledrop/errors.log`, for problems
+/// that shouldn't interrupt the UI (a background task panicking, say).
+pub fn log_error(message: &str) {
+    use std::io::Write;
+    let Some(path) = xdg_dir("XDG_STATE_HOME", ".local/state").map(|d| d.join("needledrop/errors.log")) else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "[{seconds}] {message}");
+    }
+}
+
 fn settings_path() -> Option<PathBuf> {
     Some(xdg_dir("XDG_CONFIG_HOME", ".config")?.join("needledrop/settings.json"))
 }
@@ -159,6 +177,8 @@ mod tests {
             album: None,
             duration: None,
             thumbnail: None,
+            artist_id: None,
+            album_id: None,
         };
         let session = |queue: Vec<Track>, current| Session {
             queue,
@@ -183,6 +203,8 @@ mod tests {
                 album: None,
                 duration: Some(Duration::from_secs(200)),
                 thumbnail: Some("https://t".into()),
+                artist_id: None,
+                album_id: None,
             }],
             current: Some(0),
             position: 61.5,
