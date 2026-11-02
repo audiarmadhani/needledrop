@@ -2,6 +2,8 @@
 name = "needledrop"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+repository = "https://github.com/audiarmadhani/needledrop"
 description = "A good-looking terminal client for YouTube Music"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
@@ -19,6 +21,6 @@ rookie = "0.5.6"
 rustfft = "6.4.1"
 serde_json = "1.0.154"
 sha1 = "0.11.0"
-souvlaki = "0.9.3"
+souvlaki = { version = "0.9.3", default-features = false, features = ["use_zbus"] }
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "process", "time"] }
 unicode-width = "0.2.3"

@@ -1,5 +1,7 @@
 # needledrop
 
+[![CI](https://github.com/audiarmadhani/needledrop/actions/workflows/ci.yml/badge.svg)](https://github.com/audiarmadhani/needledrop/actions/workflows/ci.yml)
+
 A good-looking terminal client for YouTube Music, written in Rust.
 
 - Your YouTube Music library: Liked Music and playlists, with likes you can toggle
