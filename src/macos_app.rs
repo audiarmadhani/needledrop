@@ -38,8 +38,7 @@ pub fn install() -> Result<()> {
     if binary.canonicalize().ok().as_ref() != Some(&current) {
         copy_binary(&current, &binary, &app)?;
     }
-    fs::write(app.join("Contents/Info.plist"), info_plist())?;
-    sign(&app)?;
+    refresh_bundle(&app)?;
 
     let link = home.join(".local/bin/needledrop");
     fs::create_dir_all(link.parent().expect("has a parent"))?;
@@ -74,7 +73,8 @@ pub fn run_from_app() -> Result<()> {
     }
     if fingerprint(&current)? != fs::read_to_string(fingerprint_path(&app)).unwrap_or_default() {
         copy_binary(&current, &binary, &app)?;
-        sign(&app)?;
+        // A new build may bring a new Info.plist or icon too.
+        refresh_bundle(&app)?;
     }
     let error = Command::new(&binary).args(std::env::args_os().skip(1)).exec();
     Err(error).with_context(|| format!("could not start {}", binary.display()))
@@ -109,6 +109,51 @@ fn copy_binary(from: &Path, to: &Path, app: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Writes the Info.plist and icon, then signs the bundle (sealing both).
+fn refresh_bundle(app: &Path) -> Result<()> {
+    fs::write(app.join("Contents/Info.plist"), info_plist())?;
+    // An icon is a nicety: without iconutil the app just keeps the default one.
+    let _ = write_icon(&app.join("Contents/Resources/AppIcon.icns"));
+    sign(app)?;
+    // Finder and LaunchServices cache icons by the bundle's modification time.
+    let _ = Command::new("touch").arg(app).status();
+    Ok(())
+}
+
+/// Renders the pixel-art icon at every size an `.icns` holds and packs them
+/// with `iconutil`.
+fn write_icon(icns: &Path) -> Result<()> {
+    let iconset = std::env::temp_dir().join(format!("needledrop-{}.iconset", std::process::id()));
+    fs::create_dir_all(&iconset)?;
+    for (points, scale) in [
+        (16, 1),
+        (16, 2),
+        (32, 1),
+        (32, 2),
+        (128, 1),
+        (128, 2),
+        (256, 1),
+        (256, 2),
+        (512, 1),
+        (512, 2),
+    ] {
+        let suffix = if scale == 2 { "@2x" } else { "" };
+        crate::icon::scaled(points * scale).save(iconset.join(format!("icon_{points}x{points}{suffix}.png")))?;
+    }
+    fs::create_dir_all(icns.parent().expect("has a parent"))?;
+    let status = Command::new("iconutil")
+        .args(["--convert", "icns", "--output"])
+        .arg(icns)
+        .arg(&iconset)
+        .stderr(std::process::Stdio::null())
+        .status();
+    let _ = fs::remove_dir_all(&iconset);
+    if !status.context("could not run iconutil")?.success() {
+        bail!("iconutil couldn't build the icon");
+    }
+    Ok(())
+}
+
 fn info_plist() -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -123,6 +168,8 @@ fn info_plist() -> String {
     <string>needledrop</string>
     <key>CFBundleExecutable</key>
     <string>needledrop</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

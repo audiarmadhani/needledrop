@@ -4,6 +4,8 @@ mod art;
 mod auth;
 mod browse;
 mod event;
+#[cfg(target_os = "macos")]
+mod icon;
 mod lyrics;
 #[cfg(target_os = "macos")]
 mod macos_app;
