@@ -1,0 +1,24 @@
+[package]
+name = "needledrop"
+version = "0.1.0"
+edition = "2024"
+description = "A good-looking terminal client for YouTube Music"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["youtube-music", "tui", "music", "player", "terminal"]
+categories = ["command-line-utilities", "multimedia::audio"]
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+fastrand = "2.5.0"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
+ratatui = "0.30.2"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "rustls"] }
+rookie = "0.5.6"
+rustfft = "6.4.1"
+serde_json = "1.0.154"
+sha1 = "0.11.0"
+souvlaki = "0.9.3"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "process", "time"] }
+unicode-width = "0.2.3"
