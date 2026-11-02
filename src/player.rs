@@ -108,6 +108,18 @@ impl Player {
         self.command(json!(["playlist-clear"])).await
     }
 
+    /// Loads `url` paused at `seconds`, for resuming a saved session.
+    pub async fn load_paused_at(&mut self, url: &str, seconds: f64) -> Result<()> {
+        self.command(json!(["set_property", "pause", true])).await?;
+        // Arguments: url, flags, playlist index (-1: none), per-file options.
+        self.command(json!(["loadfile", url, "replace", -1, format!("start={seconds:.1}")]))
+            .await
+    }
+
+    pub async fn set_volume(&mut self, volume: f64) -> Result<()> {
+        self.command(json!(["set_property", "volume", volume])).await
+    }
+
     pub async fn toggle_pause(&mut self) -> Result<()> {
         self.command(json!(["cycle", "pause"])).await
     }

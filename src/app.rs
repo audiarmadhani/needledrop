@@ -14,6 +14,7 @@ use crate::lyrics::{self, Lyrics};
 use crate::media::{self, Command};
 use crate::model::{Playlist, Track};
 use crate::palette::Palette;
+use crate::persist::{Session, Settings};
 use crate::player::{Player, PlayerEvent};
 use crate::retro::ArtStyle;
 use crate::streams::{self, Streams};
@@ -21,6 +22,9 @@ use crate::visualizer::Visualizer;
 
 const SEEK_STEP: f64 = 5.0;
 const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How often the listening session is saved while something is loaded, so a
+/// crash or a killed terminal loses at most this much.
+const SESSION_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 /// Browse id of the Liked Music auto-playlist.
 const LIKED_MUSIC: &str = "VLLM";
 const VOLUME_STEP: f64 = 5.0;
@@ -75,8 +79,10 @@ pub struct TrackList {
     pub loading: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Repeat {
+    #[default]
     Off,
     /// Start the queue over after the last track.
     All,
@@ -125,12 +131,16 @@ pub struct Playback {
     pub duration: f64,
     pub paused: bool,
     pub volume: f64,
+    /// Whether mpv has reported a position since the last load or pause
+    /// change, i.e. the audio is really moving. Until then the clock holds
+    /// still, so it can't run ahead while a song is still loading.
+    pub advancing: bool,
 }
 
 impl Playback {
     /// The position right now, extrapolated from mpv's last report.
     pub fn current_position(&self) -> f64 {
-        if self.paused {
+        if self.paused || !self.advancing {
             self.position
         } else {
             self.position + self.position_at.elapsed().as_secs_f64()
@@ -168,6 +178,10 @@ pub struct App {
     pub art_style: ArtStyle,
     /// The terminal theme's colors, when they can be read.
     pub palette: Option<Palette>,
+    /// The settings as last written to disk, to save only real changes.
+    saved_settings: Settings,
+    /// When the session was last written to disk.
+    session_saved_at: Instant,
     /// A message for the footer; cleared `STATUS_TIMEOUT` after it changes.
     pub status: Option<String>,
     /// The status last seen by a tick, and since when.
@@ -196,7 +210,13 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(api: api::Client, player: Player, media: media::Handle, events: UnboundedSender<Event>) -> Self {
+    pub fn new(
+        api: api::Client,
+        player: Player,
+        media: media::Handle,
+        settings: Settings,
+        events: UnboundedSender<Event>,
+    ) -> Self {
         let signed_in = api.is_signed_in();
         let mut app = Self {
             focus: if signed_in { Focus::Library } else { Focus::Search },
@@ -223,18 +243,21 @@ impl App {
                 position_at: Instant::now(),
                 duration: 0.0,
                 paused: false,
-                volume: 100.0,
+                volume: settings.volume,
+                advancing: false,
             },
-            shuffle: false,
-            repeat: Repeat::Off,
+            shuffle: settings.shuffle,
+            repeat: settings.repeat,
             show_lyrics: false,
             minimal: false,
             lyrics: None,
             lyrics_scroll: 0,
-            visualizer: Visualizer::new(),
+            visualizer: Visualizer::new(settings.visualizer),
             art: None,
-            art_style: ArtStyle::Terminal,
+            art_style: settings.art_style,
             palette: None,
+            saved_settings: settings,
+            session_saved_at: Instant::now(),
             status: None,
             status_seen: None,
             should_quit: false,
@@ -282,7 +305,56 @@ impl App {
         self.handle_event(event).await?;
         // Whatever just happened (a skip, a shuffle, a removal, a radio
         // landing), make sure mpv has the right song queued next.
-        self.refresh_preload().await
+        self.refresh_preload().await?;
+        self.save_settings_if_changed();
+        Ok(())
+    }
+
+    fn settings(&self) -> Settings {
+        Settings {
+            art_style: self.art_style,
+            visualizer: self.visualizer.style,
+            volume: self.playback.volume,
+            shuffle: self.shuffle,
+            repeat: self.repeat,
+        }
+    }
+
+    fn save_settings_if_changed(&mut self) {
+        let settings = self.settings();
+        if settings != self.saved_settings && settings.save().is_ok() {
+            self.saved_settings = settings;
+        }
+    }
+
+    /// Saves the queue, the current song, and where in it we are.
+    pub fn save_session(&mut self) {
+        let session = Session {
+            queue: self.queue.clone(),
+            current: self.current,
+            position: self.playback.current_position(),
+        };
+        // Losing the session is a nuisance, not worth interrupting playback for.
+        let _ = session.save();
+        self.session_saved_at = Instant::now();
+    }
+
+    /// Applies the saved volume, and reloads the saved session paused where
+    /// it left off.
+    pub async fn restore(&mut self, session: Option<Session>) -> Result<()> {
+        self.player.set_volume(self.playback.volume).await?;
+        let Some(session) = session else { return Ok(()) };
+        self.queue = session.queue;
+        let Some(index) = session.current else { return Ok(()) };
+        self.enter_track(index);
+        self.queue_state.select(Some(index));
+        self.playback.position = session.position;
+        self.playback.paused = true;
+        self.report_playback();
+        let url = self.queue[index].url();
+        self.player.load_paused_at(&url, session.position).await?;
+        self.status = Some("Picked up where you left off. Press space to play".into());
+        Ok(())
     }
 
     async fn handle_event(&mut self, event: Event) -> Result<()> {
@@ -295,6 +367,9 @@ impl App {
                 let playing = self.current.is_some() && !self.playback.paused;
                 self.visualizer.tick(playing.then(|| self.playback.current_position()));
                 self.expire_status();
+                if self.current.is_some() && self.session_saved_at.elapsed() >= SESSION_SAVE_INTERVAL {
+                    self.save_session();
+                }
             }
             Event::Radio {
                 request,
@@ -367,6 +442,7 @@ impl App {
                 let jumped = (seconds - self.playback.current_position()).abs() > 1.5;
                 self.playback.position = seconds;
                 self.playback.position_at = Instant::now();
+                self.playback.advancing = true;
                 if jumped {
                     self.report_playback();
                 }
@@ -377,6 +453,7 @@ impl App {
                 // Fold the time played since the last report in before freezing.
                 self.playback.position = self.playback.current_position();
                 self.playback.position_at = Instant::now();
+                self.playback.advancing = false;
                 self.playback.paused = paused;
                 self.report_playback();
             }
@@ -729,6 +806,7 @@ impl App {
         }
         self.playback.position = 0.0;
         self.playback.position_at = Instant::now();
+        self.playback.advancing = false;
         self.playback.duration = track.duration.map_or(0.0, |d| d.as_secs_f64());
         self.current = Some(index);
         self.visualizer.clear();
@@ -1009,5 +1087,30 @@ mod tests {
         assert_eq!(next_index(1, 3, Repeat::One, Ended), Some(1));
         assert_eq!(next_index(1, 3, Repeat::One, Skip), Some(2));
         assert_eq!(next_index(2, 3, Repeat::One, Skip), None);
+    }
+}
+
+#[cfg(test)]
+mod playback_tests {
+    use super::*;
+
+    #[test]
+    fn clock_holds_until_mpv_confirms_playback() {
+        let mut playback = Playback {
+            position: 25.0,
+            position_at: Instant::now() - std::time::Duration::from_secs(5),
+            duration: 200.0,
+            paused: false,
+            volume: 100.0,
+            advancing: false,
+        };
+        assert_eq!(playback.current_position(), 25.0, "still loading: no extrapolation");
+        playback.advancing = true;
+        assert!(
+            playback.current_position() >= 30.0,
+            "playing: counts on from the last report"
+        );
+        playback.paused = true;
+        assert_eq!(playback.current_position(), 25.0);
     }
 }

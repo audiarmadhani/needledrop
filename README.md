@@ -95,6 +95,13 @@ Without signing in, search and playback still work.
 When the last track in the queue starts and repeat is off, needledrop
 appends a radio based on it, so the music keeps going.
 
+## Picking up where you left off
+
+needledrop remembers your settings (art style, visualizer, volume, shuffle,
+repeat) in `~/.config/needledrop/settings.json`, and your queue, song, and
+position in `~/.local/state/needledrop/session.json`. On launch, the song you
+were on is loaded paused where you stopped: press space to carry on.
+
 ## Colors
 
 needledrop draws with your terminal's palette colors rather than its own, so

@@ -14,6 +14,7 @@ use ratatui::style::Color;
 use ratatui::widgets::Widget;
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::task::AbortHandle;
@@ -42,9 +43,11 @@ const WAVE_POINTS: usize = 48;
 type Samples = Arc<Mutex<Vec<i16>>>;
 
 /// The looks `V` cycles through, after Windows Media Player's visualizations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Style {
     /// Smooth, wide spectrum bars.
+    #[default]
     Bars,
     /// Thin bars with peak caps that hang, then fall (WMP's "Bars").
     Peaks,
@@ -84,9 +87,9 @@ pub struct Visualizer {
 }
 
 impl Visualizer {
-    pub fn new() -> Self {
+    pub fn new(style: Style) -> Self {
         Self {
-            style: Style::Bars,
+            style,
             analyzer: Analyzer::new(),
             samples: Samples::default(),
             decode: None,
@@ -432,7 +435,7 @@ mod tests {
 
     #[test]
     fn bars_fall_gradually_when_paused() {
-        let mut visualizer = Visualizer::new();
+        let mut visualizer = Visualizer::new(Style::Bars);
         visualizer.levels = vec![1.0; BANDS];
         visualizer.tick(None);
         assert!(visualizer.levels.iter().all(|&l| (l - DECAY).abs() < 1e-6));
@@ -441,7 +444,7 @@ mod tests {
 
     #[test]
     fn peak_caps_hang_then_fall() {
-        let mut visualizer = Visualizer::new();
+        let mut visualizer = Visualizer::new(Style::Bars);
         visualizer.levels = vec![1.0; BANDS];
         visualizer.tick(None);
         let (caught, hold) = visualizer.peaks[0];

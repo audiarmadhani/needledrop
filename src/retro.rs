@@ -5,12 +5,15 @@
 //! never shimmers between frames.
 
 use image::{Rgb, RgbImage};
+use serde::{Deserialize, Serialize};
 
 use crate::palette::Palette;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ArtStyle {
     /// The terminal theme's own colors (needs a readable Ghostty theme).
+    #[default]
     Terminal,
     /// PICO-8's 16-color palette.
     Pico8,

@@ -10,6 +10,7 @@ mod media;
 mod minimal;
 mod model;
 mod palette;
+mod persist;
 mod player;
 mod retro;
 mod streams;
@@ -198,16 +199,38 @@ async fn tui(
     let player = Player::spawn(events.clone()).await?;
 
     let mut terminal = ratatui::init();
-    let mut app = App::new(api, player, media, events.clone());
+    let mut app = App::new(api, player, media, persist::Settings::load(), events.clone());
+    app.restore(persist::Session::load()).await?;
     palette::watch(events.clone());
     spawn_ticker(events.clone());
+    spawn_signal_handler(events.clone());
     event::spawn_input_reader(events);
     let result = run(&mut terminal, &mut app, &mut rx).await;
+    // However the loop ended (quit, closed terminal, mpv dying), keep the session.
+    app.save_session();
     ratatui::restore();
     result
 }
 
 const FRAME: std::time::Duration = std::time::Duration::from_millis(33);
+
+/// A closed terminal window or a `kill` sends SIGHUP or SIGTERM, which would
+/// end the process on the spot. Turn them into a normal quit, so the session
+/// is saved and the terminal restored.
+fn spawn_signal_handler(events: mpsc::UnboundedSender<Event>) {
+    use tokio::signal::unix::{SignalKind, signal};
+    tokio::spawn(async move {
+        let (Ok(mut hangup), Ok(mut terminate)) = (signal(SignalKind::hangup()), signal(SignalKind::terminate()))
+        else {
+            return;
+        };
+        tokio::select! {
+            _ = hangup.recv() => {}
+            _ = terminate.recv() => {}
+        }
+        let _ = events.send(Event::InputClosed);
+    });
+}
 
 fn spawn_ticker(events: mpsc::UnboundedSender<Event>) {
     tokio::spawn(async move {
