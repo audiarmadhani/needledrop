@@ -3,6 +3,7 @@ mod app;
 mod art;
 mod auth;
 mod browse;
+mod cards;
 mod event;
 #[cfg(target_os = "macos")]
 mod icon;

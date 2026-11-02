@@ -87,24 +87,36 @@ fn browse_target(endpoint: &Value) -> Option<(String, &'static str)> {
     Some((id.to_owned(), kind))
 }
 
-fn browse_item(id: String, kind: &str, title: String, subtitle: String) -> Item {
+fn browse_item(id: String, kind: &str, title: String, subtitle: String, thumbnail: Option<String>) -> Item {
     match kind {
         "album" => Item::Album {
             browse_id: id,
             title,
             subtitle,
+            thumbnail,
         },
         "artist" => Item::Artist {
             browse_id: id,
             name: title,
             subtitle,
+            thumbnail,
         },
         _ => Item::Playlist {
             browse_id: id,
             title,
             subtitle,
+            thumbnail,
         },
     }
+}
+
+/// The largest image in a tile's thumbnail.
+fn tile_thumbnail(tile: &Value) -> Option<String> {
+    tile["thumbnailRenderer"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"]
+        .as_array()?
+        .last()?["url"]
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// A tile (`musicTwoRowItemRenderer`): an album, artist, playlist, or song.
@@ -113,15 +125,11 @@ pub fn parse_tile(tile: &Value) -> Option<Item> {
     let subtitle = runs_text(&tile["subtitle"]);
     let endpoint = &tile["navigationEndpoint"];
     if let Some((id, kind)) = browse_target(endpoint) {
-        return Some(browse_item(id, kind, title, subtitle));
+        return Some(browse_item(id, kind, title, subtitle, tile_thumbnail(tile)));
     }
     let video_id = endpoint["watchEndpoint"]["videoId"].as_str()?;
     let (artist_id, album_id) = links(tile);
-    let thumbnail = tile["thumbnailRenderer"]["musicThumbnailRenderer"]["thumbnail"]["thumbnails"]
-        .as_array()
-        .and_then(|t| t.last())
-        .and_then(|t| t["url"].as_str())
-        .map(str::to_owned);
+    let thumbnail = tile_thumbnail(tile);
     Some(Item::Song(Track {
         video_id: video_id.to_owned(),
         title,
@@ -138,7 +146,7 @@ pub fn parse_tile(tile: &Value) -> Option<Item> {
 pub fn parse_row(row: &Value) -> Option<Item> {
     let title = column_text(row, 0);
     if let Some((id, kind)) = browse_target(&row["navigationEndpoint"]) {
-        return Some(browse_item(id, kind, title, column_text(row, 1)));
+        return Some(browse_item(id, kind, title, column_text(row, 1), thumbnail_url(row)));
     }
     parse_song_row(row).map(Item::Song)
 }
@@ -231,6 +239,7 @@ pub fn parse_artist(response: &Value) -> Artist {
             browse_id: all_songs.to_owned(),
             title: "All songs".to_owned(),
             subtitle: String::new(),
+            thumbnail: None,
         });
     }
     Artist {
@@ -361,7 +370,8 @@ mod tests {
             Item::Album {
                 browse_id: "MPREb_x".into(),
                 title: "Soft".into(),
-                subtitle: "Album • 2024".into()
+                subtitle: "Album • 2024".into(),
+                thumbnail: None,
             }
         );
         let artist = parse_tile(&tile(

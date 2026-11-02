@@ -57,6 +57,11 @@ pub enum Event {
         video_id: String,
         result: Result<String, String>,
     },
+    /// A card's cover (`None` if it couldn't be fetched).
+    Thumbnail {
+        url: String,
+        image: Option<image::DynamicImage>,
+    },
     /// Album art for the track with this video id.
     Art {
         video_id: String,

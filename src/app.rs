@@ -8,12 +8,12 @@ use ratatui::widgets::ListState;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::{self, Account};
-use crate::art::{self, AlbumArt};
+use crate::art::{self, AlbumArt, Thumbnails};
 use crate::event::Event;
 use crate::lyrics::{self, Lyrics};
 use crate::media::{self, Command};
 use crate::model::{Item, Playlist, Track};
-use crate::pages::{Loaded, Nav, Page};
+use crate::pages::{Content, Loaded, Nav, Page};
 use crate::palette::Palette;
 use crate::persist::{Session, Settings};
 use crate::player::{Player, PlayerEvent};
@@ -151,6 +151,10 @@ pub struct App {
     pub liked: HashSet<String>,
     /// The middle pane's pages: Home, playlists, albums, artists, search.
     pub nav: Nav,
+    /// Covers for the cards on shelves pages.
+    pub thumbnails: Thumbnails,
+    /// Limits how many covers download at once.
+    thumbnail_slots: std::sync::Arc<tokio::sync::Semaphore>,
     pub queue: Vec<Track>,
     pub queue_state: ListState,
     /// Index into `queue` of the track loaded in mpv.
@@ -224,6 +228,8 @@ impl App {
             library_state: ListState::default(),
             liked: HashSet::new(),
             nav: Nav::default(),
+            thumbnails: Thumbnails::default(),
+            thumbnail_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(6)),
             queue: Vec::new(),
             queue_state: ListState::default(),
             current: None,
@@ -393,6 +399,7 @@ impl App {
                     self.streams.insert(video_id, url);
                 }
             }
+            Event::Thumbnail { url, image } => self.thumbnails.arrived(url, image),
             Event::Art { video_id, image } => {
                 if self.now_playing().is_some_and(|t| t.video_id == video_id) {
                     self.art = Some(AlbumArt::new(image));
@@ -420,6 +427,7 @@ impl App {
                         if page.is_empty() {
                             self.status = Some(format!("Nothing in {}", page.title));
                         }
+                        self.fetch_thumbnails(request);
                     }
                     Err(error) => {
                         page.loading = false;
@@ -491,8 +499,9 @@ impl App {
             // Only playback keys: the browsing panes aren't on screen.
             let playback = matches!(
                 key.code,
-                KeyCode::Char('q' | ' ' | 'n' | 'p' | 'l' | 'h' | '+' | '=' | '-' | 's' | 'r' | 'f' | 'V' | 'A')
-                    | KeyCode::Left
+                KeyCode::Char(
+                    'q' | ' ' | 'n' | 'p' | 'l' | 'h' | ',' | '.' | '+' | '=' | '-' | 's' | 'r' | 'f' | 'V' | 'A'
+                ) | KeyCode::Left
                     | KeyCode::Right
             );
             if !playback {
@@ -572,8 +581,11 @@ impl App {
             KeyCode::Char('s') => self.set_shuffle(!self.shuffle),
             KeyCode::Char('r') => self.repeat = self.repeat.cycle(),
             KeyCode::Char('p') => self.previous().await?,
-            KeyCode::Char('l') | KeyCode::Right => self.player.seek(SEEK_STEP).await?,
-            KeyCode::Char('h') | KeyCode::Left => self.player.seek(-SEEK_STEP).await?,
+            // On a page of cards, left and right move along the shelf.
+            KeyCode::Char('l') | KeyCode::Right if self.cards_have_focus() => self.move_across(1),
+            KeyCode::Char('h') | KeyCode::Left if self.cards_have_focus() => self.move_across(-1),
+            KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('.') => self.player.seek(SEEK_STEP).await?,
+            KeyCode::Char('h') | KeyCode::Left | KeyCode::Char(',') => self.player.seek(-SEEK_STEP).await?,
             KeyCode::Char('+') | KeyCode::Char('=') => self.player.change_volume(VOLUME_STEP).await?,
             KeyCode::Char('-') => self.player.change_volume(-VOLUME_STEP).await?,
             _ => {}
@@ -669,6 +681,26 @@ impl App {
             };
             let _ = events.send(Event::Page { request, result });
         });
+    }
+
+    /// Starts downloading the covers on the page filled by load `request`.
+    fn fetch_thumbnails(&mut self, request: u64) {
+        let Some(Content::Shelves(shelves)) = self.nav.waiting_for(request).map(|page| &page.content) else {
+            return;
+        };
+        let urls = shelves
+            .shelves
+            .iter()
+            .flat_map(|shelf| shelf.items.iter().filter_map(Item::thumbnail));
+        for url in self.thumbnails.claim(urls) {
+            let events = self.events.clone();
+            let slots = self.thumbnail_slots.clone();
+            tokio::spawn(async move {
+                let _slot = slots.acquire_owned().await;
+                let image = art::fetch(&url).await.ok();
+                let _ = events.send(Event::Thumbnail { url, image });
+            });
+        }
     }
 
     fn open_home(&mut self) {
@@ -1051,6 +1083,16 @@ impl App {
         match self.resume_at.take() {
             Some(start) if start < self.queue.len() => self.play(start).await,
             _ => Ok(()),
+        }
+    }
+
+    fn cards_have_focus(&self) -> bool {
+        self.focus == Focus::Tracks && !self.show_lyrics && self.nav.current().is_some_and(Page::is_shelves)
+    }
+
+    fn move_across(&mut self, delta: isize) {
+        if let Some(page) = self.nav.current_mut() {
+            page.move_across(delta);
         }
     }
 

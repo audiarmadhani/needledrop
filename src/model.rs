@@ -41,16 +41,19 @@ pub enum Item {
         browse_id: String,
         title: String,
         subtitle: String,
+        thumbnail: Option<String>,
     },
     Artist {
         browse_id: String,
         name: String,
         subtitle: String,
+        thumbnail: Option<String>,
     },
     Playlist {
         browse_id: String,
         title: String,
         subtitle: String,
+        thumbnail: Option<String>,
     },
 }
 
@@ -60,6 +63,16 @@ impl Item {
             Item::Song(track) => &track.title,
             Item::Album { title, .. } | Item::Playlist { title, .. } => title,
             Item::Artist { name, .. } => name,
+        }
+    }
+
+    /// Cover art URL (a portrait for artists).
+    pub fn thumbnail(&self) -> Option<&str> {
+        match self {
+            Item::Song(track) => track.thumbnail.as_deref(),
+            Item::Album { thumbnail, .. } | Item::Artist { thumbnail, .. } | Item::Playlist { thumbnail, .. } => {
+                thumbnail.as_deref()
+            }
         }
     }
 
