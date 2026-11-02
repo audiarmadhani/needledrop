@@ -117,6 +117,7 @@ fn render_art(app: &mut App, frame: &mut Frame, area: Rect) {
             PixelArt {
                 style: app.art_style,
                 palette: app.palette,
+                round: false,
             },
             area,
             art,

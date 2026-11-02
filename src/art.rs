@@ -86,6 +86,8 @@ pub struct PixelArt {
     pub style: ArtStyle,
     /// The terminal theme, for `ArtStyle::Terminal`.
     pub palette: Option<Palette>,
+    /// Clip to a circle, the way YouTube Music shows artists.
+    pub round: bool,
 }
 
 impl StatefulWidget for PixelArt {
@@ -105,17 +107,77 @@ impl StatefulWidget for PixelArt {
             let [r, g, b] = pixels.get_pixel(x, y).0;
             Color::Rgb(r, g, b)
         };
+        let radius = side as f32 / 2.0;
+        let shown = |x: u32, y: u32| {
+            y < side
+                && (!self.round || {
+                    let (dx, dy) = (x as f32 + 0.5 - radius, y as f32 + 0.5 - radius);
+                    dx * dx + dy * dy <= radius * radius
+                })
+        };
         for row in 0..rows {
             for x in 0..side {
-                let upper = color(x, row as u32 * 2);
-                // An odd height leaves the last row's lower half empty.
-                let lower = (row as u32 * 2 + 1 < side).then(|| color(x, row as u32 * 2 + 1));
+                let (top_y, bottom_y) = (row as u32 * 2, row as u32 * 2 + 1);
                 let cell = &mut buf[(left + x as u16, top + row)];
-                cell.set_symbol("▀").set_fg(upper);
-                if let Some(lower) = lower {
-                    cell.set_bg(lower);
+                // Each cell shows two stacked pixels; draw whichever are inside.
+                match (shown(x, top_y), shown(x, bottom_y)) {
+                    (true, true) => {
+                        cell.set_symbol("▀").set_fg(color(x, top_y)).set_bg(color(x, bottom_y));
+                    }
+                    (true, false) => {
+                        cell.set_symbol("▀").set_fg(color(x, top_y));
+                    }
+                    (false, true) => {
+                        cell.set_symbol("▄").set_fg(color(x, bottom_y));
+                    }
+                    (false, false) => {}
                 }
             }
+        }
+    }
+}
+
+enum Thumb {
+    Loading,
+    Ready(Box<AlbumArt>),
+    Failed,
+}
+
+/// Covers for the cards on browse pages, by URL, fetched once each.
+#[derive(Default)]
+pub struct Thumbnails {
+    covers: std::collections::HashMap<String, Thumb>,
+}
+
+/// Plenty for several pages of shelves; beyond it the cache starts over.
+const MAX_THUMBNAILS: usize = 600;
+
+impl Thumbnails {
+    /// Marks the URLs not seen before as loading and returns them, to fetch.
+    pub fn claim<'a>(&mut self, urls: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+        if self.covers.len() > MAX_THUMBNAILS {
+            self.covers.retain(|_, thumb| matches!(thumb, Thumb::Loading));
+        }
+        let mut new = Vec::new();
+        for url in urls {
+            // Checked one at a time, so a cover on two shelves is fetched once.
+            if !self.covers.contains_key(url) {
+                self.covers.insert(url.to_owned(), Thumb::Loading);
+                new.push(url.to_owned());
+            }
+        }
+        new
+    }
+
+    pub fn arrived(&mut self, url: String, image: Option<DynamicImage>) {
+        let thumb = image.map_or(Thumb::Failed, |image| Thumb::Ready(Box::new(AlbumArt::new(image))));
+        self.covers.insert(url, thumb);
+    }
+
+    pub fn get_mut(&mut self, url: &str) -> Option<&mut AlbumArt> {
+        match self.covers.get_mut(url)? {
+            Thumb::Ready(art) => Some(art),
+            Thumb::Loading | Thumb::Failed => None,
         }
     }
 }
@@ -123,6 +185,38 @@ impl StatefulWidget for PixelArt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn round_art_leaves_the_corners_alone() {
+        let image = RgbImage::from_pixel(8, 8, image::Rgb([255, 0, 0]));
+        let mut art = AlbumArt::new(DynamicImage::ImageRgb8(image));
+        let area = Rect::new(0, 0, 8, 4);
+        let mut buf = Buffer::empty(area);
+        PixelArt {
+            style: ArtStyle::Original,
+            palette: None,
+            round: true,
+        }
+        .render(area, &mut buf, &mut art);
+        assert_eq!(buf[(0, 0)].symbol(), " ", "corner outside the circle");
+        assert_eq!(buf[(4, 2)].symbol(), "▀", "center inside");
+    }
+
+    #[test]
+    fn thumbnails_are_claimed_once() {
+        let mut thumbs = Thumbnails::default();
+        assert_eq!(thumbs.claim(["a", "b"]), vec!["a", "b"]);
+        assert_eq!(
+            thumbs.claim(["a", "c", "c"]),
+            vec!["c"],
+            "a is on its way; c is claimed once"
+        );
+        assert!(thumbs.get_mut("a").is_none(), "still loading");
+        thumbs.arrived("a".into(), Some(DynamicImage::new_rgb8(4, 4)));
+        assert!(thumbs.get_mut("a").is_some());
+        thumbs.arrived("b".into(), None);
+        assert!(thumbs.get_mut("b").is_none(), "failed covers stay placeholders");
+    }
 
     #[test]
     fn asks_google_for_a_larger_thumbnail() {
@@ -151,6 +245,7 @@ mod tests {
         PixelArt {
             style: ArtStyle::Pico8,
             palette: None,
+            round: false,
         }
         .render(area, &mut buf, &mut art);
         // A 1-row area fits a 2×2 pixel square, centered in 6 columns.

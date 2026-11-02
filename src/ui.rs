@@ -8,10 +8,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus, Library, LyricsState, Repeat};
 use crate::art::PixelArt;
+use crate::cards;
 use crate::lyrics::Lyrics;
 use crate::minimal;
-use crate::model::Item;
-use crate::pages::{Content, Row as PageRow};
+use crate::pages::Content;
 use crate::theme::Theme;
 use crate::visualizer::Visual;
 
@@ -320,23 +320,17 @@ fn render_tracks(app: &mut App, frame: &mut Frame, area: Rect) {
     let highlight = if focused { THEME.selection() } else { Style::new() };
     let (tracks, state) = match &mut page.content {
         Content::Tracks { tracks, state } => (tracks, state),
-        Content::Shelves { shelves, rows, state } => {
-            let items = rows.iter().map(|row| match *row {
-                PageRow::Heading(s) => {
-                    let heading = Line::styled(shelves[s].title.clone(), THEME.accent().add_modifier(Modifier::BOLD));
-                    // A blank line above every heading but the first.
-                    if s == 0 {
-                        ListItem::new(heading)
-                    } else {
-                        ListItem::new(vec![Line::raw(""), heading])
-                    }
-                }
-                PageRow::Item(s, i) => shelf_item(&shelves[s].items[i], playing_id, liked),
-            });
-            let list = List::new(items.collect::<Vec<_>>())
-                .block(block)
-                .highlight_style(highlight);
-            frame.render_stateful_widget(list, area, state);
+        Content::Shelves(shelves) => {
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+            let look = cards::Look {
+                focused,
+                art_style: app.art_style,
+                palette: app.palette,
+                playing_id,
+                liked,
+            };
+            cards::render(frame, inner, shelves, &mut app.thumbnails, &look);
             return;
         }
     };
@@ -387,36 +381,6 @@ fn render_tracks(app: &mut App, frame: &mut Frame, area: Rect) {
     frame.render_stateful_widget(table, area, state);
 }
 
-/// One line on a shelves page: a symbol for the kind of item, its title, and
-/// a dimmed detail (artists, year, followers).
-fn shelf_item(item: &Item, playing_id: Option<&str>, liked: &std::collections::HashSet<String>) -> ListItem<'static> {
-    let (symbol, extra) = match item {
-        Item::Song(track) => ("♪", Some(heart(liked.contains(&track.video_id)))),
-        Item::Album { .. } => ("◉", None),
-        Item::Artist { .. } => ("◆", None),
-        Item::Playlist { .. } => ("☰", None),
-    };
-    let playing = matches!(item, Item::Song(t) if playing_id == Some(t.video_id.as_str()));
-    let title_style = if playing {
-        Style::new().fg(THEME.playing)
-    } else {
-        THEME.text()
-    };
-    let mut spans = vec![
-        Span::styled(format!("  {symbol}  "), THEME.accent()),
-        Span::styled(item.title().to_owned(), title_style),
-    ];
-    if let Some(heart) = extra {
-        spans.push(Span::raw(" "));
-        spans.push(heart);
-    }
-    let subtitle = item.subtitle();
-    if !subtitle.is_empty() {
-        spans.push(Span::styled(format!("  {subtitle}"), THEME.muted()));
-    }
-    ListItem::new(Line::from(spans))
-}
-
 fn render_queue(app: &mut App, frame: &mut Frame, area: Rect) {
     let focused = app.focus == Focus::Queue;
     let block = panel(format!("queue · {}", app.queue.len()), focused);
@@ -457,6 +421,7 @@ fn render_now_playing(app: &mut App, frame: &mut Frame, area: Rect) {
             PixelArt {
                 style: app.art_style,
                 palette: app.palette,
+                round: false,
             },
             art_area,
             art,

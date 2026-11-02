@@ -2,28 +2,66 @@
 //! a page (an album on an artist page, say) pushes; `esc` goes back; picking
 //! from the library or searching starts a new stack.
 
-use ratatui::widgets::{ListState, TableState};
+use ratatui::widgets::TableState;
 
 use crate::model::{Item, Shelf, Track};
 
 pub enum Content {
     /// A playlist, an album: songs in order.
     Tracks { tracks: Vec<Track>, state: TableState },
-    /// Home, an artist, search results: titled shelves of items.
-    Shelves {
-        shelves: Vec<Shelf>,
-        rows: Vec<Row>,
-        state: ListState,
-    },
+    /// Home, an artist, search results: shelves of cards.
+    Shelves(Shelves),
 }
 
-/// A line in a shelves page.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Row {
-    /// A shelf's title.
-    Heading(usize),
-    /// An item: shelf index, item index.
-    Item(usize, usize),
+/// Shelves of cards with a two-dimensional cursor: which shelf, and which
+/// item along it. Each shelf remembers its own position, so moving up and
+/// back down lands on the same card.
+pub struct Shelves {
+    pub shelves: Vec<Shelf>,
+    /// The selected shelf.
+    pub shelf: usize,
+    /// The selected item in each shelf.
+    pub columns: Vec<usize>,
+    /// First shelf on screen; the renderer keeps the selection in view.
+    pub scroll: usize,
+}
+
+impl Shelves {
+    fn new(shelves: Vec<Shelf>) -> Self {
+        let columns = vec![0; shelves.len()];
+        Self {
+            shelves,
+            shelf: 0,
+            columns,
+            scroll: 0,
+        }
+    }
+
+    /// The selected item in shelf `shelf`.
+    pub fn column(&self, shelf: usize) -> usize {
+        self.columns.get(shelf).copied().unwrap_or(0)
+    }
+
+    pub fn selected(&self) -> Option<&Item> {
+        self.shelves.get(self.shelf)?.items.get(self.column(self.shelf))
+    }
+
+    /// Up and down between shelves; `isize::MIN` / `MAX` jump to the ends.
+    fn move_shelf(&mut self, delta: isize) {
+        if !self.shelves.is_empty() {
+            self.shelf = self.shelf.saturating_add_signed(delta).min(self.shelves.len() - 1);
+        }
+    }
+
+    /// Left and right along the selected shelf.
+    fn move_across(&mut self, delta: isize) {
+        let Some(len) = self.shelves.get(self.shelf).map(|s| s.items.len()) else {
+            return;
+        };
+        if let (Some(column), true) = (self.columns.get_mut(self.shelf), len > 0) {
+            *column = column.saturating_add_signed(delta).min(len - 1);
+        }
+    }
 }
 
 pub struct Page {
@@ -51,11 +89,7 @@ pub enum Loaded {
 impl Page {
     pub fn loading(title: String, request: u64, shelves: bool) -> Self {
         let content = if shelves {
-            Content::Shelves {
-                shelves: vec![],
-                rows: vec![],
-                state: ListState::default(),
-            }
+            Content::Shelves(Shelves::new(vec![]))
         } else {
             Content::Tracks {
                 tracks: vec![],
@@ -81,11 +115,8 @@ impl Page {
                 self.content = Content::Tracks { tracks, state };
             }
             Loaded::Shelves { shelves, subtitle } => {
-                let rows = rows(&shelves);
-                let mut state = ListState::default();
-                state.select(rows.iter().position(|row| matches!(row, Row::Item(..))));
                 self.subtitle = subtitle;
-                self.content = Content::Shelves { shelves, rows, state };
+                self.content = Content::Shelves(Shelves::new(shelves));
             }
         }
     }
@@ -93,11 +124,15 @@ impl Page {
     pub fn is_empty(&self) -> bool {
         match &self.content {
             Content::Tracks { tracks, .. } => tracks.is_empty(),
-            Content::Shelves { shelves, .. } => shelves.is_empty(),
+            Content::Shelves(shelves) => shelves.shelves.is_empty(),
         }
     }
 
-    /// Moves the selection by `delta` items (headings are skipped);
+    pub fn is_shelves(&self) -> bool {
+        matches!(self.content, Content::Shelves(_))
+    }
+
+    /// Up and down: songs in a list, shelves on a shelves page.
     /// `isize::MIN` / `isize::MAX` jump to the first / last.
     pub fn move_selection(&mut self, delta: isize) {
         match &mut self.content {
@@ -111,28 +146,21 @@ impl Page {
                     state.select(Some(to));
                 }
             }
-            Content::Shelves { rows, state, .. } => {
-                let items: Vec<usize> = (0..rows.len()).filter(|&i| matches!(rows[i], Row::Item(..))).collect();
-                if items.is_empty() {
-                    return;
-                }
-                let at = state
-                    .selected()
-                    .and_then(|s| items.iter().position(|&i| i == s))
-                    .unwrap_or(0);
-                let to = at.saturating_add_signed(delta).min(items.len() - 1);
-                state.select(Some(items[to]));
-            }
+            Content::Shelves(shelves) => shelves.move_shelf(delta),
+        }
+    }
+
+    /// Left and right along a shelf (no-op on a song list).
+    pub fn move_across(&mut self, delta: isize) {
+        if let Content::Shelves(shelves) = &mut self.content {
+            shelves.move_across(delta);
         }
     }
 
     pub fn selected_item(&self) -> Option<&Item> {
-        let Content::Shelves { shelves, rows, state } = &self.content else {
-            return None;
-        };
-        match rows.get(state.selected()?)? {
-            Row::Item(shelf, item) => shelves[*shelf].items.get(*item),
-            Row::Heading(_) => None,
+        match &self.content {
+            Content::Shelves(shelves) => shelves.selected(),
+            Content::Tracks { .. } => None,
         }
     }
 
@@ -140,7 +168,7 @@ impl Page {
     pub fn selected_track(&self) -> Option<&Track> {
         match &self.content {
             Content::Tracks { tracks, state } => tracks.get(state.selected()?),
-            Content::Shelves { .. } => match self.selected_item()? {
+            Content::Shelves(shelves) => match shelves.selected()? {
                 Item::Song(track) => Some(track),
                 _ => None,
             },
@@ -152,11 +180,9 @@ impl Page {
     pub fn queue_from_selection(&self) -> Option<(Vec<Track>, usize)> {
         match &self.content {
             Content::Tracks { tracks, state } => Some((tracks.clone(), state.selected()?)),
-            Content::Shelves { shelves, rows, state } => {
-                let Row::Item(shelf, item) = *rows.get(state.selected()?)? else {
-                    return None;
-                };
-                let items = &shelves[shelf].items;
+            Content::Shelves(shelves) => {
+                let items = &shelves.shelves.get(shelves.shelf)?.items;
+                let item = shelves.column(shelves.shelf);
                 if !matches!(items.get(item)?, Item::Song(_)) {
                     return None;
                 }
@@ -173,16 +199,6 @@ impl Page {
             }
         }
     }
-}
-
-fn rows(shelves: &[Shelf]) -> Vec<Row> {
-    shelves
-        .iter()
-        .enumerate()
-        .flat_map(|(s, shelf)| {
-            std::iter::once(Row::Heading(s)).chain((0..shelf.items.len()).map(move |i| Row::Item(s, i)))
-        })
-        .collect()
 }
 
 /// The page stack. Never empty once something is opened.
@@ -244,6 +260,7 @@ mod tests {
             browse_id: id.into(),
             title: id.into(),
             subtitle: String::new(),
+            thumbnail: None,
         }
     }
 
@@ -257,7 +274,7 @@ mod tests {
                 },
                 Shelf {
                     title: "Albums".into(),
-                    items: vec![album("y")],
+                    items: vec![album("y"), album("z")],
                 },
             ],
             subtitle: None,
@@ -266,27 +283,34 @@ mod tests {
     }
 
     #[test]
-    fn selection_skips_headings() {
+    fn moves_across_and_between_shelves_remembering_each_position() {
         let mut page = shelves_page();
+        assert_eq!(page.selected_item(), Some(&song("a")));
+        page.move_across(2);
+        assert_eq!(page.selected_item(), Some(&song("b")));
+        page.move_across(5);
+        assert_eq!(page.selected_item(), Some(&song("b")), "stops at the end of the shelf");
+        page.move_selection(1);
         assert_eq!(
             page.selected_item(),
-            Some(&song("a")),
-            "starts on the first item, not a heading"
+            Some(&album("y")),
+            "the next shelf starts where it was left"
         );
-        page.move_selection(3);
-        assert_eq!(page.selected_item(), Some(&album("y")), "crossed the Albums heading");
-        page.move_selection(isize::MIN);
-        assert_eq!(page.selected_item(), Some(&song("a")));
+        page.move_across(1);
+        page.move_selection(-1);
+        assert_eq!(page.selected_item(), Some(&song("b")), "back up to where we were");
+        page.move_selection(isize::MAX);
+        assert_eq!(page.selected_item(), Some(&album("z")));
     }
 
     #[test]
     fn playing_from_a_shelf_queues_its_songs() {
         let mut page = shelves_page();
-        page.move_selection(2);
+        page.move_across(2);
         let (queue, index) = page.queue_from_selection().unwrap();
         let ids: Vec<_> = queue.iter().map(|t| t.video_id.as_str()).collect();
         assert_eq!((ids, index), (vec!["a", "b"], 1), "albums are left out; it starts on b");
-        page.move_selection(-1);
+        page.move_across(-1);
         assert_eq!(page.queue_from_selection(), None, "an album isn't a song to queue");
     }
 

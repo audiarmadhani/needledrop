@@ -18,6 +18,16 @@
 [How it works](#how-it-works)
 
 <img src="docs/assets/demo.gif" alt="needledrop searching for a song, playing it with a visualizer, cycling album art palettes, showing synced lyrics, and switching to minimal mode">
+- Home: your Quick picks, mixes, Listen again, and recommendations, as rows of pixel-art cover cards
+- Artist and album pages, and search across songs, albums, artists, and playlists
+- Your YouTube Music library: Liked Music and playlists, with likes you can toggle
+- Search, a queue with shuffle and repeat, and endless autoplay (radio) when the queue runs out
+- Album covers as 8-bit pixel art, in your terminal theme's colors or the PICO-8, Game Boy, or C64 palettes
+- Visualizers synced to the music, after Windows Media Player's: spectrum bars, bars with falling peaks, and an oscilloscope
+- A minimal, full-screen now-playing mode
+- Follows your terminal's color theme, live
+- Time-synced lyrics
+- Media keys and the macOS Now Playing widget (MPRIS on Linux)
 
 </div>
 
@@ -134,6 +144,18 @@ cargo run --release
 | `space` | Pause / resume |
 | `n` / `p` | Next / previous |
 | `←` / `→` (`h` / `l`) | Seek 5 s |
+| `tab` / `shift-tab` | Move between library, tracks, and queue |
+| `j` / `k`, `g` / `G` | Move (between shelves on card pages), jump to top or bottom |
+| `h` / `l`, `←` / `→` | On card pages: move along a shelf |
+| `enter` | Play a song (queueing its list or shelf), or open an album, artist, or playlist |
+| `esc` / `backspace` | Back to the previous page |
+| `i` / `o` | Open the selected (or playing) song's artist / album |
+| `/` | Search |
+| `a` | Add the selected track to the queue |
+| `d` | Remove the selected track from the queue |
+| `space` | Pause or resume |
+| `n` / `p` | Next or previous track |
+| `,` / `.` | Seek 5 s (also `←` / `→` and `h` / `l` outside card pages) |
 | `+` / `-` | Volume |
 | `a` / `d` | Add to / remove from queue |
 | `s` | Shuffle the rest |
