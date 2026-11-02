@@ -55,7 +55,10 @@ pub struct Client {
 impl Client {
     pub fn new(credentials: Option<Credentials>) -> Result<Self> {
         let http = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
-        Ok(Self { http, credentials: credentials.map(Arc::new) })
+        Ok(Self {
+            http,
+            credentials: credentials.map(Arc::new),
+        })
     }
 
     pub fn is_signed_in(&self) -> bool {
@@ -63,7 +66,9 @@ impl Client {
     }
 
     pub async fn search_songs(&self, query: &str) -> Result<Vec<Track>> {
-        let response = self.post("search", &[], json!({ "query": query, "params": SONGS_FILTER })).await?;
+        let response = self
+            .post("search", &[], json!({ "query": query, "params": SONGS_FILTER }))
+            .await?;
         Ok(parse_search(&response))
     }
 
@@ -71,19 +76,25 @@ impl Client {
     /// signed out (for example, expired cookies).
     pub async fn account(&self) -> Result<Option<Account>> {
         let response = self.post("account/account_menu", &[], json!({})).await?;
-        let header = &response["actions"][0]["openPopupAction"]["popup"]["multiPageMenuRenderer"]
-            ["header"]["activeAccountHeaderRenderer"];
-        let Some(name) = header["accountName"]["runs"][0]["text"].as_str() else { return Ok(None) };
+        let header = &response["actions"][0]["openPopupAction"]["popup"]["multiPageMenuRenderer"]["header"]["activeAccountHeaderRenderer"];
+        let Some(name) = header["accountName"]["runs"][0]["text"].as_str() else {
+            return Ok(None);
+        };
         let detail = ["email", "channelHandle"]
             .iter()
             .find_map(|key| header[*key]["runs"][0]["text"].as_str())
             .map(str::to_owned);
-        Ok(Some(Account { name: name.to_owned(), detail }))
+        Ok(Some(Account {
+            name: name.to_owned(),
+            detail,
+        }))
     }
 
     /// Liked Music and the user's playlists, in library order.
     pub async fn library_playlists(&self) -> Result<Vec<Playlist>> {
-        let mut response = self.post("browse", &[], json!({ "browseId": "FEmusic_liked_playlists" })).await?;
+        let mut response = self
+            .post("browse", &[], json!({ "browseId": "FEmusic_liked_playlists" }))
+            .await?;
         let mut grid = response["contents"]["singleColumnBrowseResultsRenderer"]["tabs"][0]["tabRenderer"]
             ["content"]["sectionListRenderer"]["contents"][0]["gridRenderer"]
             .take();
@@ -112,9 +123,8 @@ impl Client {
             tracks.extend(page);
             let Some(token) = next else { break };
             response = self.post("browse", &[], json!({ "continuation": token })).await?;
-            items = response["onResponseReceivedActions"][0]["appendContinuationItemsAction"]
-                ["continuationItems"]
-                .take();
+            items =
+                response["onResponseReceivedActions"][0]["appendContinuationItemsAction"]["continuationItems"].take();
         }
         Ok(tracks)
     }
@@ -141,7 +151,8 @@ impl Client {
             bail!("sign in to like songs");
         }
         let endpoint = if liked { "like/like" } else { "like/removelike" };
-        self.post(endpoint, &[], json!({ "target": { "videoId": video_id } })).await?;
+        self.post(endpoint, &[], json!({ "target": { "videoId": video_id } }))
+            .await?;
         Ok(())
     }
 
@@ -177,8 +188,8 @@ impl Client {
 }
 
 fn parse_search(response: &Value) -> Vec<Track> {
-    let sections = &response["contents"]["tabbedSearchResultsRenderer"]["tabs"][0]["tabRenderer"]
-        ["content"]["sectionListRenderer"]["contents"];
+    let sections = &response["contents"]["tabbedSearchResultsRenderer"]["tabs"][0]["tabRenderer"]["content"]["sectionListRenderer"]
+        ["contents"];
     sections
         .as_array()
         .into_iter()
@@ -205,13 +216,21 @@ fn parse_song(item: &Value) -> Option<Track> {
     let artists = parts.next().unwrap_or_default().to_owned();
     let album = parts.next().map(str::to_owned);
 
-    Some(Track { video_id, title, artists, album, duration, thumbnail: thumbnail_url(item) })
+    Some(Track {
+        video_id,
+        title,
+        artists,
+        album,
+        duration,
+        thumbnail: thumbnail_url(item),
+    })
 }
 
 fn parse_watch_next(response: &Value) -> WatchNext {
-    let tabs = &response["contents"]["singleColumnMusicWatchNextResultsRenderer"]["tabbedRenderer"]
-        ["watchNextTabbedResultsRenderer"]["tabs"];
-    let items = &tabs[0]["tabRenderer"]["content"]["musicQueueRenderer"]["content"]["playlistPanelRenderer"]["contents"];
+    let tabs = &response["contents"]["singleColumnMusicWatchNextResultsRenderer"]["tabbedRenderer"]["watchNextTabbedResultsRenderer"]
+        ["tabs"];
+    let items =
+        &tabs[0]["tabRenderer"]["content"]["musicQueueRenderer"]["content"]["playlistPanelRenderer"]["contents"];
     let radio = items
         .as_array()
         .into_iter()
@@ -250,7 +269,9 @@ fn parse_panel_video(video: &Value) -> Option<Track> {
         artists: parts.first().copied().unwrap_or_default().to_owned(),
         album: (parts.len() >= 3).then(|| parts[1].to_owned()),
         duration: parse_duration(&runs_text(&video["lengthText"])),
-        thumbnail: video["thumbnail"]["thumbnails"].as_array()?.last()?["url"].as_str().map(str::to_owned),
+        thumbnail: video["thumbnail"]["thumbnails"].as_array()?.last()?["url"]
+            .as_str()
+            .map(str::to_owned),
     })
 }
 
@@ -323,7 +344,12 @@ fn column_text(item: &Value, column: usize) -> String {
 }
 
 fn runs_text(text: &Value) -> String {
-    text["runs"].as_array().into_iter().flatten().filter_map(|run| run["text"].as_str()).collect()
+    text["runs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|run| run["text"].as_str())
+        .collect()
 }
 
 /// Parses `m:ss` or `h:mm:ss`.
@@ -364,7 +390,11 @@ mod tests {
 
     #[test]
     fn parses_songs_from_search_response() {
-        let mut weird_fishes = row("LUjGtyYEi90", "Weird Fishes / Arpeggi", &["Radiohead", " • ", "In Rainbows", " • ", "5:19"]);
+        let mut weird_fishes = row(
+            "LUjGtyYEi90",
+            "Weird Fishes / Arpeggi",
+            &["Radiohead", " • ", "In Rainbows", " • ", "5:19"],
+        );
         weird_fishes["musicResponsiveListItemRenderer"]["thumbnail"] = json!({ "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [
             { "url": "https://lh3.googleusercontent.com/t=w60-h60" },
             { "url": "https://lh3.googleusercontent.com/t=w120-h120" },
@@ -375,24 +405,27 @@ mod tests {
             json!({ "musicResponsiveListItemRenderer": {} }),
         ]));
 
-        assert_eq!(tracks, vec![
-            Track {
-                video_id: "LUjGtyYEi90".into(),
-                title: "Weird Fishes / Arpeggi".into(),
-                artists: "Radiohead".into(),
-                album: Some("In Rainbows".into()),
-                duration: Some(Duration::from_secs(319)),
-                thumbnail: Some("https://lh3.googleusercontent.com/t=w120-h120".into()),
-            },
-            Track {
-                video_id: "abc".into(),
-                title: "Collab".into(),
-                artists: "A & B".into(),
-                album: Some("Single".into()),
-                duration: Some(Duration::from_secs(3723)),
-                thumbnail: None,
-            },
-        ]);
+        assert_eq!(
+            tracks,
+            vec![
+                Track {
+                    video_id: "LUjGtyYEi90".into(),
+                    title: "Weird Fishes / Arpeggi".into(),
+                    artists: "Radiohead".into(),
+                    album: Some("In Rainbows".into()),
+                    duration: Some(Duration::from_secs(319)),
+                    thumbnail: Some("https://lh3.googleusercontent.com/t=w120-h120".into()),
+                },
+                Track {
+                    video_id: "abc".into(),
+                    title: "Collab".into(),
+                    artists: "A & B".into(),
+                    album: Some("Single".into()),
+                    duration: Some(Duration::from_secs(3723)),
+                    thumbnail: None,
+                },
+            ]
+        );
     }
 
     fn playlist_row(video_id: Option<&str>, title: &str, artists: &str, album: &str, duration: &str) -> Value {
@@ -416,24 +449,27 @@ mod tests {
             { "continuationItemRenderer": { "continuationEndpoint": { "continuationCommand": { "token": "NEXT" } } } },
         ]);
         let (tracks, next) = parse_playlist_page(&items);
-        assert_eq!(tracks, vec![
-            Track {
-                video_id: "v1".into(),
-                title: "Jazz Festival".into(),
-                artists: "Straizo".into(),
-                album: Some("Postcards From Molde".into()),
-                duration: Some(Duration::from_secs(141)),
-                thumbnail: None,
-            },
-            Track {
-                video_id: "v2".into(),
-                title: "No Album".into(),
-                artists: "Someone".into(),
-                album: None,
-                duration: Some(Duration::from_secs(180)),
-                thumbnail: None,
-            },
-        ]);
+        assert_eq!(
+            tracks,
+            vec![
+                Track {
+                    video_id: "v1".into(),
+                    title: "Jazz Festival".into(),
+                    artists: "Straizo".into(),
+                    album: Some("Postcards From Molde".into()),
+                    duration: Some(Duration::from_secs(141)),
+                    thumbnail: None,
+                },
+                Track {
+                    video_id: "v2".into(),
+                    title: "No Album".into(),
+                    artists: "Someone".into(),
+                    album: None,
+                    duration: Some(Duration::from_secs(180)),
+                    thumbnail: None,
+                },
+            ]
+        );
         assert_eq!(next.as_deref(), Some("NEXT"));
     }
 
@@ -447,31 +483,46 @@ mod tests {
 
     #[test]
     fn parses_library_grid_skipping_new_playlist_tile() {
-        let tile = |title: &str, endpoint: Value, subtitle: &str| json!({ "musicTwoRowItemRenderer": {
-            "title": { "runs": [{ "text": title }] },
-            "subtitle": { "runs": [{ "text": subtitle }] },
-            "navigationEndpoint": endpoint,
-        }});
+        let tile = |title: &str, endpoint: Value, subtitle: &str| {
+            json!({ "musicTwoRowItemRenderer": {
+                "title": { "runs": [{ "text": title }] },
+                "subtitle": { "runs": [{ "text": subtitle }] },
+                "navigationEndpoint": endpoint,
+            }})
+        };
         let grid = json!({ "items": [
             tile("New playlist", json!({ "createPlaylistEndpoint": {} }), ""),
             tile("Liked Music", json!({ "browseEndpoint": { "browseId": "VLLM" } }), "Auto playlist"),
             tile("Chillax", json!({ "browseEndpoint": { "browseId": "VLPL1" } }), "Me • 48 tracks"),
         ]});
-        assert_eq!(parse_grid_playlists(&grid), vec![
-            Playlist { browse_id: "VLLM".into(), title: "Liked Music".into(), subtitle: "Auto playlist".into() },
-            Playlist { browse_id: "VLPL1".into(), title: "Chillax".into(), subtitle: "Me • 48 tracks".into() },
-        ]);
+        assert_eq!(
+            parse_grid_playlists(&grid),
+            vec![
+                Playlist {
+                    browse_id: "VLLM".into(),
+                    title: "Liked Music".into(),
+                    subtitle: "Auto playlist".into()
+                },
+                Playlist {
+                    browse_id: "VLPL1".into(),
+                    title: "Chillax".into(),
+                    subtitle: "Me • 48 tracks".into()
+                },
+            ]
+        );
     }
 
     #[test]
     fn parses_radio_and_lyrics_tab() {
-        let video = |id: &str, title: &str, byline: &[&str], length: &str| json!({
-            "videoId": id,
-            "title": { "runs": [{ "text": title }] },
-            "longBylineText": { "runs": byline.iter().map(|t| json!({ "text": t })).collect::<Vec<_>>() },
-            "lengthText": { "runs": [{ "text": length }] },
-            "thumbnail": { "thumbnails": [{ "url": "small" }, { "url": "big" }] },
-        });
+        let video = |id: &str, title: &str, byline: &[&str], length: &str| {
+            json!({
+                "videoId": id,
+                "title": { "runs": [{ "text": title }] },
+                "longBylineText": { "runs": byline.iter().map(|t| json!({ "text": t })).collect::<Vec<_>>() },
+                "lengthText": { "runs": [{ "text": length }] },
+                "thumbnail": { "thumbnails": [{ "url": "small" }, { "url": "big" }] },
+            })
+        };
         let response = json!({ "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": {
             "watchNextTabbedResultsRenderer": { "tabs": [
                 { "tabRenderer": { "content": { "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
@@ -486,16 +537,27 @@ mod tests {
         }}}});
         let next = parse_watch_next(&response);
         assert_eq!(next.lyrics_id.as_deref(), Some("MPLYt_x"));
-        assert_eq!(next.radio, vec![
-            Track {
-                video_id: "a".into(), title: "Song".into(), artists: "Artist".into(), album: Some("Album".into()),
-                duration: Some(Duration::from_secs(319)), thumbnail: Some("big".into()),
-            },
-            Track {
-                video_id: "b".into(), title: "Video".into(), artists: "Band".into(), album: None,
-                duration: Some(Duration::from_secs(180)), thumbnail: Some("big".into()),
-            },
-        ]);
+        assert_eq!(
+            next.radio,
+            vec![
+                Track {
+                    video_id: "a".into(),
+                    title: "Song".into(),
+                    artists: "Artist".into(),
+                    album: Some("Album".into()),
+                    duration: Some(Duration::from_secs(319)),
+                    thumbnail: Some("big".into()),
+                },
+                Track {
+                    video_id: "b".into(),
+                    title: "Video".into(),
+                    artists: "Band".into(),
+                    album: None,
+                    duration: Some(Duration::from_secs(180)),
+                    thumbnail: Some("big".into()),
+                },
+            ]
+        );
     }
 
     #[test]

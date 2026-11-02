@@ -98,7 +98,10 @@ fn sign(app: &Path) -> Result<()> {
 fn replace_link(link: &Path, target: &Path) -> Result<()> {
     match fs::symlink_metadata(link) {
         Ok(meta) if meta.file_type().is_symlink() => fs::remove_file(link)?,
-        Ok(_) => bail!("{} exists and isn't a link; move it away and run this again", link.display()),
+        Ok(_) => bail!(
+            "{} exists and isn't a link; move it away and run this again",
+            link.display()
+        ),
         Err(_) => {}
     }
     symlink(target, link).with_context(|| format!("could not link {}", link.display()))

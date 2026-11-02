@@ -48,12 +48,19 @@ impl Theme {
 
     pub fn title(&self, focused: bool) -> Style {
         let style = Style::new().add_modifier(Modifier::BOLD);
-        if focused { style.fg(self.accent) } else { style.fg(self.muted) }
+        if focused {
+            style.fg(self.accent)
+        } else {
+            style.fg(self.muted)
+        }
     }
 
     /// The highlighted row. Sets the text color too, because dimmed text
     /// would vanish against the bright-black highlight.
     pub fn selection(&self) -> Style {
-        Style::new().bg(self.selection_bg).fg(self.text).add_modifier(Modifier::BOLD)
+        Style::new()
+            .bg(self.selection_bg)
+            .fg(self.text)
+            .add_modifier(Modifier::BOLD)
     }
 }

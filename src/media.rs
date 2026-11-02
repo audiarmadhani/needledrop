@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
-use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig, SeekDirection};
+use souvlaki::{
+    MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig, SeekDirection,
+};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::event::Event;
@@ -34,9 +36,19 @@ pub enum Command {
 /// What the app tells the OS.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Update {
-    Track { title: String, artist: String, album: Option<String>, cover_url: Option<String>, duration: Option<Duration> },
-    Playing { position: f64 },
-    Paused { position: f64 },
+    Track {
+        title: String,
+        artist: String,
+        album: Option<String>,
+        cover_url: Option<String>,
+        duration: Option<Duration>,
+    },
+    Playing {
+        position: f64,
+    },
+    Paused {
+        position: f64,
+    },
     Stopped,
     Shuffle(bool),
 }
@@ -62,7 +74,11 @@ impl Handle {
 pub fn create(events: UnboundedSender<Event>) -> Option<MediaControls> {
     #[cfg(target_os = "macos")]
     register_as_app();
-    let config = PlatformConfig { dbus_name: "needledrop", display_name: "needledrop", hwnd: None };
+    let config = PlatformConfig {
+        dbus_name: "needledrop",
+        display_name: "needledrop",
+        hwnd: None,
+    };
     let mut controls = MediaControls::new(config).ok()?;
     controls
         .attach(move |event| {
@@ -76,7 +92,13 @@ pub fn create(events: UnboundedSender<Event>) -> Option<MediaControls> {
 
 fn command(event: MediaControlEvent) -> Option<Command> {
     const SEEK_STEP: f64 = 10.0;
-    let signed = |direction, seconds: f64| if direction == SeekDirection::Forward { seconds } else { -seconds };
+    let signed = |direction, seconds: f64| {
+        if direction == SeekDirection::Forward {
+            seconds
+        } else {
+            -seconds
+        }
+    };
     Some(match event {
         MediaControlEvent::Play => Command::Play,
         MediaControlEvent::Pause => Command::Pause,
@@ -108,15 +130,25 @@ pub fn run(mut controls: Option<MediaControls>, updates: Receiver<Update>, done:
 fn apply(controls: &mut MediaControls, update: Update) {
     let progress = |seconds: f64| Some(MediaPosition(Duration::from_secs_f64(seconds.max(0.0))));
     let _ = match update {
-        Update::Track { title, artist, album, cover_url, duration } => controls.set_metadata(MediaMetadata {
+        Update::Track {
+            title,
+            artist,
+            album,
+            cover_url,
+            duration,
+        } => controls.set_metadata(MediaMetadata {
             title: Some(&title),
             artist: Some(&artist),
             album: album.as_deref(),
             cover_url: cover_url.as_deref(),
             duration,
         }),
-        Update::Playing { position } => controls.set_playback(MediaPlayback::Playing { progress: progress(position) }),
-        Update::Paused { position } => controls.set_playback(MediaPlayback::Paused { progress: progress(position) }),
+        Update::Playing { position } => controls.set_playback(MediaPlayback::Playing {
+            progress: progress(position),
+        }),
+        Update::Paused { position } => controls.set_playback(MediaPlayback::Paused {
+            progress: progress(position),
+        }),
         Update::Stopped => controls.set_playback(MediaPlayback::Stopped),
         Update::Shuffle(on) => controls.set_shuffle(Some(on)),
     };
@@ -194,9 +226,15 @@ mod tests {
     #[test]
     fn maps_os_events_to_commands() {
         assert_eq!(command(MediaControlEvent::Toggle), Some(Command::Toggle));
-        assert_eq!(command(MediaControlEvent::Seek(SeekDirection::Backward)), Some(Command::SeekBy(-10.0)));
         assert_eq!(
-            command(MediaControlEvent::SeekBy(SeekDirection::Forward, Duration::from_secs(15))),
+            command(MediaControlEvent::Seek(SeekDirection::Backward)),
+            Some(Command::SeekBy(-10.0))
+        );
+        assert_eq!(
+            command(MediaControlEvent::SeekBy(
+                SeekDirection::Forward,
+                Duration::from_secs(15)
+            )),
             Some(Command::SeekBy(15.0))
         );
         assert_eq!(

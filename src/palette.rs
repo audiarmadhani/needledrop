@@ -73,7 +73,9 @@ struct Settings {
 
 impl Settings {
     fn read_config(&mut self, path: &Path, depth: u8) {
-        let Ok(text) = std::fs::read_to_string(path) else { return };
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return;
+        };
         for (key, value) in entries(&text) {
             match key {
                 "theme" => self.theme = Some(value.to_owned()),
@@ -92,7 +94,10 @@ impl Settings {
         let mut builder = Builder::default();
         if let Some(theme) = &self.theme {
             let name = theme_name(theme);
-            let file = theme_dirs.iter().map(|dir| dir.join(name)).find(|path| path.is_file())?;
+            let file = theme_dirs
+                .iter()
+                .map(|dir| dir.join(name))
+                .find(|path| path.is_file())?;
             let text = std::fs::read_to_string(file).ok()?;
             for (key, value) in entries(&text) {
                 builder.set(key, value);
@@ -116,7 +121,9 @@ impl Builder {
     fn set(&mut self, key: &str, value: &str) {
         match key {
             "palette" => {
-                let Some((index, hex)) = value.split_once('=') else { return };
+                let Some((index, hex)) = value.split_once('=') else {
+                    return;
+                };
                 if let (Ok(index), Some(color)) = (index.trim().parse::<usize>(), parse_hex(hex))
                     && let Some(slot) = self.ansi.get_mut(index)
                 {
@@ -134,7 +141,11 @@ impl Builder {
         for (slot, color) in ansi.iter_mut().zip(self.ansi) {
             *slot = color?;
         }
-        Some(Palette { ansi, background: self.background?, foreground: self.foreground? })
+        Some(Palette {
+            ansi,
+            background: self.background?,
+            foreground: self.foreground?,
+        })
     }
 }
 
@@ -178,7 +189,9 @@ fn theme_dirs(config_dir: &Path) -> Vec<PathBuf> {
     if let Some(resources) = std::env::var_os("GHOSTTY_RESOURCES_DIR") {
         dirs.push(PathBuf::from(resources).join("themes"));
     }
-    dirs.push(PathBuf::from("/Applications/Ghostty.app/Contents/Resources/ghostty/themes"));
+    dirs.push(PathBuf::from(
+        "/Applications/Ghostty.app/Contents/Resources/ghostty/themes",
+    ));
     dirs.push(PathBuf::from("/usr/share/ghostty/themes"));
     dirs
 }
@@ -202,8 +215,16 @@ mod tests {
         let themes = dir.join("themes");
         std::fs::create_dir_all(&themes).unwrap();
         std::fs::write(themes.join("Test Theme"), theme_file(&[(5, "#ff79c6")])).unwrap();
-        std::fs::write(dir.join("config"), "font-size = 12\nconfig-file = ?current-theme\nconfig-file = ?missing\n").unwrap();
-        std::fs::write(dir.join("current-theme"), "theme = \"Test Theme\"\npalette = 1=#ff5555\n").unwrap();
+        std::fs::write(
+            dir.join("config"),
+            "font-size = 12\nconfig-file = ?current-theme\nconfig-file = ?missing\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("current-theme"),
+            "theme = \"Test Theme\"\npalette = 1=#ff5555\n",
+        )
+        .unwrap();
 
         let mut settings = Settings::default();
         settings.read_config(&dir.join("config"), 0);
@@ -217,7 +238,10 @@ mod tests {
 
     #[test]
     fn missing_theme_means_no_palette() {
-        let settings = Settings { theme: Some("Nope".into()), overrides: vec![] };
+        let settings = Settings {
+            theme: Some("Nope".into()),
+            overrides: vec![],
+        };
         assert_eq!(settings.resolve(&[]), None);
     }
 

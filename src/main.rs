@@ -66,7 +66,11 @@ fn main() -> Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     match Cli::parse().command {
         None => run_tui(runtime),
-        Some(Command::Login { browser, paste, account }) => runtime.block_on(login(browser, paste, account)),
+        Some(Command::Login {
+            browser,
+            paste,
+            account,
+        }) => runtime.block_on(login(browser, paste, account)),
         #[cfg(target_os = "macos")]
         Some(Command::InstallApp) => macos_app::install(),
         Some(Command::Logout) => {
@@ -108,7 +112,11 @@ async fn login(browser: Option<Browser>, paste: bool, choice: Option<u32>) -> Re
     };
     let credentials = credentials.with_account(index);
     let path = credentials.save()?;
-    println!("Signed in as {}. Login saved to {}", accounts[index as usize], path.display());
+    println!(
+        "Signed in as {}. Login saved to {}",
+        accounts[index as usize],
+        path.display()
+    );
     Ok(())
 }
 
@@ -174,7 +182,11 @@ impl Drop for SetOnDrop {
     }
 }
 
-async fn tui(events: mpsc::UnboundedSender<Event>, mut rx: UnboundedReceiver<Event>, media: media::Handle) -> Result<()> {
+async fn tui(
+    events: mpsc::UnboundedSender<Event>,
+    mut rx: UnboundedReceiver<Event>,
+    media: media::Handle,
+) -> Result<()> {
     let credentials = Credentials::load()?.map(Credentials::refreshed);
     let api = api::Client::new(credentials)?;
     // Start mpv before taking over the terminal so a startup error prints cleanly.

@@ -196,8 +196,15 @@ async fn decode(url: &str, samples: &Samples) -> Result<()> {
         }
         pending.extend_from_slice(&chunk[..read]);
         let whole = pending.len() / 2 * 2;
-        let decoded = pending[..whole].as_chunks::<2>().0.iter().map(|&b| i16::from_le_bytes(b));
-        samples.lock().map_err(|_| anyhow::anyhow!("sample buffer poisoned"))?.extend(decoded);
+        let decoded = pending[..whole]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&b| i16::from_le_bytes(b));
+        samples
+            .lock()
+            .map_err(|_| anyhow::anyhow!("sample buffer poisoned"))?
+            .extend(decoded);
         pending.drain(..whole);
     }
     ffmpeg.wait().await?;
@@ -224,7 +231,11 @@ impl Analyzer {
                 (start, bin(edge(i + 1)).max(start + 1))
             })
             .collect();
-        Self { fft: FftPlanner::new().plan_fft_forward(FFT_SIZE), window, bands }
+        Self {
+            fft: FftPlanner::new().plan_fft_forward(FFT_SIZE),
+            window,
+            bands,
+        }
     }
 
     /// Band levels in `0.0..=1.0` for the audio just before `seconds`, or
@@ -300,7 +311,9 @@ fn draw_bars(
     let left = area.x + (area.width - used) / 2;
     let loudest = |values: &[f32], bar: usize| {
         let from = bar * values.len() / bars as usize;
-        let to = ((bar + 1) * values.len() / bars as usize).max(from + 1).min(values.len());
+        let to = ((bar + 1) * values.len() / bars as usize)
+            .max(from + 1)
+            .min(values.len());
         values[from..to].iter().copied().fold(0.0, f32::max)
     };
     let color_at = |row: u16| colors[row as usize * colors.len() / area.height as usize];
@@ -313,7 +326,9 @@ fn draw_bars(
             }
             let symbol = EIGHTHS[eighths.min(8) as usize - 1];
             for dx in 0..bar_width {
-                buf[(x + dx, area.bottom() - 1 - row)].set_symbol(symbol).set_fg(color_at(row));
+                buf[(x + dx, area.bottom() - 1 - row)]
+                    .set_symbol(symbol)
+                    .set_fg(color_at(row));
             }
             eighths -= 8;
         }
@@ -344,7 +359,9 @@ fn draw_scope(wave: &[f32], area: Rect, buf: &mut Buffer, colors: &[Color]) {
             let dots = cells[row * width + col];
             if dots != 0 {
                 let symbol = char::from_u32(0x2800 + dots as u32).expect("braille block").to_string();
-                buf[(area.x + col as u16, area.y + row as u16)].set_symbol(&symbol).set_fg(color);
+                buf[(area.x + col as u16, area.y + row as u16)]
+                    .set_symbol(&symbol)
+                    .set_fg(color);
             }
         }
     }
@@ -397,7 +414,10 @@ mod tests {
             let levels = analyzer.levels(&sine(freq, 1.0), 0.5).unwrap();
             let (lo, hi) = analyzer.bands[loudest_band(&levels)];
             let bin = (freq * FFT_SIZE as f32 / SAMPLE_RATE as f32) as usize;
-            assert!((lo.saturating_sub(1)..=hi).contains(&bin), "{freq} Hz peaked in bins {lo}..{hi}");
+            assert!(
+                (lo.saturating_sub(1)..=hi).contains(&bin),
+                "{freq} Hz peaked in bins {lo}..{hi}"
+            );
         }
     }
 
@@ -425,7 +445,11 @@ mod tests {
         visualizer.levels = vec![1.0; BANDS];
         visualizer.tick(None);
         let (caught, hold) = visualizer.peaks[0];
-        assert_eq!((caught, hold), (visualizer.levels[0], PEAK_HOLD), "the cap catches the bar's height");
+        assert_eq!(
+            (caught, hold),
+            (visualizer.levels[0], PEAK_HOLD),
+            "the cap catches the bar's height"
+        );
         for _ in 0..PEAK_HOLD {
             visualizer.tick(None);
         }
@@ -466,8 +490,18 @@ mod tests {
         let area = Rect::new(0, 0, 5, 2);
         let mut buf = Buffer::empty(area);
         let levels = [1.0, 0.25];
-        draw_bars(&levels, None, 2, area, &mut buf, &[Color::Blue, Color::Magenta], Color::White);
-        let rows: Vec<String> = (0..2).map(|y| (0..5).map(|x| buf[(x, y)].symbol().to_owned()).collect()).collect();
+        draw_bars(
+            &levels,
+            None,
+            2,
+            area,
+            &mut buf,
+            &[Color::Blue, Color::Magenta],
+            Color::White,
+        );
+        let rows: Vec<String> = (0..2)
+            .map(|y| (0..5).map(|x| buf[(x, y)].symbol().to_owned()).collect())
+            .collect();
         assert_eq!(rows, vec!["██   ", "██ ▄▄"]);
         // Bottom row in the first color, top row in the second.
         assert_eq!(buf[(0, 1)].fg, Color::Blue);

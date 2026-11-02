@@ -27,7 +27,11 @@ const MAX_VISUALIZER_ROWS: u16 = 12;
 pub fn render(app: &mut App, frame: &mut Frame) {
     let [body, hint] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(frame.area());
     render_hint(app, frame, hint);
-    let margin = if body.width >= 60 { Margin::new(4, 1) } else { Margin::new(1, 0) };
+    let margin = if body.width >= 60 {
+        Margin::new(4, 1)
+    } else {
+        Margin::new(1, 0)
+    };
     let body = body.inner(margin);
 
     if app.now_playing().is_none() {
@@ -50,13 +54,20 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         render_portrait(app, frame, top);
     }
     frame.render_widget(Paragraph::new(progress_line(app, progress.width)), progress);
-    frame.render_widget(Paragraph::new(controls_line(app)).alignment(Alignment::Center), controls);
+    frame.render_widget(
+        Paragraph::new(controls_line(app)).alignment(Alignment::Center),
+        controls,
+    );
 }
 
 fn render_landscape(app: &mut App, frame: &mut Frame, area: Rect) {
     let art_width = (area.height * 2).min(area.width / 2);
-    let [art, _, text] =
-        Layout::horizontal([Constraint::Length(art_width), Constraint::Length(GUTTER), Constraint::Fill(1)]).areas(area);
+    let [art, _, text] = Layout::horizontal([
+        Constraint::Length(art_width),
+        Constraint::Length(GUTTER),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
     render_art(app, frame, art);
 
     // Text hangs from the top of the cover; the visualizer sits on its bottom edge.
@@ -70,8 +81,7 @@ fn render_landscape(app: &mut App, frame: &mut Frame, area: Rect) {
         Constraint::Fill(1),
     ])
     .areas(text);
-    let [_, visualizer] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Max(MAX_VISUALIZER_ROWS)]).areas(rest);
+    let [_, visualizer] = Layout::vertical([Constraint::Fill(1), Constraint::Max(MAX_VISUALIZER_ROWS)]).areas(rest);
     render_titles(app, frame, title, byline, Alignment::Left);
     render_lyric(app, frame, lyrics, Alignment::Left);
     frame.render_widget(visual(app), visualizer);
@@ -103,11 +113,22 @@ fn render_portrait(app: &mut App, frame: &mut Frame, area: Rect) {
 
 fn render_art(app: &mut App, frame: &mut Frame, area: Rect) {
     match &mut app.art {
-        Some(art) => frame.render_stateful_widget(PixelArt { style: app.art_style, palette: app.palette }, area, art),
+        Some(art) => frame.render_stateful_widget(
+            PixelArt {
+                style: app.art_style,
+                palette: app.palette,
+            },
+            area,
+            art,
+        ),
         None => {
             // Keep the placeholder square, like the cover will be.
             let side = area.width.min(area.height * 2);
-            let square = Rect { width: side, height: side / 2, ..area };
+            let square = Rect {
+                width: side,
+                height: side / 2,
+                ..area
+            };
             render_art_placeholder(frame, square);
         }
     }
@@ -121,7 +142,10 @@ fn render_titles(app: &App, frame: &mut Frame, title: Rect, byline: Rect, alignm
     if let Some(album) = &track.album {
         by.push_str(&format!(" · {album}"));
     }
-    frame.render_widget(Paragraph::new(Line::styled(by, THEME.muted())).alignment(alignment), byline);
+    frame.render_widget(
+        Paragraph::new(Line::styled(by, THEME.muted())).alignment(alignment),
+        byline,
+    );
 }
 
 fn has_synced_lyrics(app: &App) -> bool {
@@ -130,7 +154,9 @@ fn has_synced_lyrics(app: &App) -> bool {
 
 /// The line being sung, highlighted, then the next one dimmed, wrapped to fit.
 fn render_lyric(app: &App, frame: &mut Frame, area: Rect, alignment: Alignment) {
-    let Some(lyrics) = current_lyrics(app).filter(|l| l.synced) else { return };
+    let Some(lyrics) = current_lyrics(app).filter(|l| l.synced) else {
+        return;
+    };
     if area.is_empty() {
         return;
     }
@@ -144,10 +170,18 @@ fn render_lyric(app: &App, frame: &mut Frame, area: Rect, alignment: Alignment) 
     let mut rows: Vec<Line> = vec![];
     if let Some(line) = now {
         let style = THEME.accent().add_modifier(Modifier::BOLD);
-        rows.extend(wrap(lyric_text(&line.text), width).into_iter().map(|r| Line::styled(r, style)));
+        rows.extend(
+            wrap(lyric_text(&line.text), width)
+                .into_iter()
+                .map(|r| Line::styled(r, style)),
+        );
     }
     if let Some(line) = next {
-        rows.extend(wrap(lyric_text(&line.text), width).into_iter().map(|r| Line::styled(r, THEME.muted())));
+        rows.extend(
+            wrap(lyric_text(&line.text), width)
+                .into_iter()
+                .map(|r| Line::styled(r, THEME.muted())),
+        );
     }
     rows.truncate(area.height as usize);
     frame.render_widget(Paragraph::new(rows).alignment(alignment), area);
@@ -159,7 +193,11 @@ fn progress_line(app: &App, width: u16) -> Line<'static> {
     let position = playback.current_position().min(playback.duration.max(0.0));
     let (elapsed, total) = (format_time(position), format_time(playback.duration));
     let bar = (width as usize).saturating_sub(elapsed.len() + total.len() + 2);
-    let ratio = if playback.duration > 0.0 { (position / playback.duration).clamp(0.0, 1.0) } else { 0.0 };
+    let ratio = if playback.duration > 0.0 {
+        (position / playback.duration).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let filled = ((ratio * bar as f64).round() as usize).min(bar.saturating_sub(1));
     Line::from(vec![
         Span::styled(format!("{elapsed} "), THEME.muted()),
@@ -180,24 +218,41 @@ fn controls_line(app: &App) -> Line<'static> {
         gap(),
         Span::styled("◀◀", THEME.text()),
         gap(),
-        Span::styled(if app.playback.paused { "▶" } else { "❚❚" }, THEME.accent().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            if app.playback.paused { "▶" } else { "❚❚" },
+            THEME.accent().add_modifier(Modifier::BOLD),
+        ),
         gap(),
         Span::styled("▶▶", THEME.text()),
         gap(),
-        Span::styled(if app.repeat == Repeat::One { "↻¹" } else { "↻" }, lit(app.repeat != Repeat::Off)),
+        Span::styled(
+            if app.repeat == Repeat::One { "↻¹" } else { "↻" },
+            lit(app.repeat != Repeat::Off),
+        ),
         gap(),
-        if liked { Span::styled("♥", Style::new().fg(THEME.error)) } else { Span::styled("♡", THEME.muted()) },
+        if liked {
+            Span::styled("♥", Style::new().fg(THEME.error))
+        } else {
+            Span::styled("♡", THEME.muted())
+        },
     ])
 }
 
 fn render_idle(frame: &mut Frame, area: Rect) {
     let lines = vec![
-        Line::from(vec![Span::styled("◉ ", THEME.accent()), Span::styled("needledrop", THEME.title(true))]),
+        Line::from(vec![
+            Span::styled("◉ ", THEME.accent()),
+            Span::styled("needledrop", THEME.title(true)),
+        ]),
         Line::raw(""),
         Line::styled("Nothing playing", THEME.muted()),
     ];
-    let [_, middle, _] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(lines.len() as u16), Constraint::Fill(1)]).areas(area);
+    let [_, middle, _] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(lines.len() as u16),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), middle);
 }
 
@@ -206,10 +261,21 @@ fn render_hint(app: &App, frame: &mut Frame, area: Rect) {
     let line = match &app.status {
         Some(status) => Line::styled(format!("{status} "), THEME.muted()),
         None => Line::from(
-            [("M", "back"), ("V", "visualizer"), ("A", "art"), ("space", "pause"), ("n/p", "skip")]
-                .iter()
-                .flat_map(|(key, action)| [Span::styled(*key, THEME.accent()), Span::styled(format!(" {action}   "), THEME.muted())])
-                .collect::<Vec<_>>(),
+            [
+                ("M", "back"),
+                ("V", "visualizer"),
+                ("A", "art"),
+                ("space", "pause"),
+                ("n/p", "skip"),
+            ]
+            .iter()
+            .flat_map(|(key, action)| {
+                [
+                    Span::styled(*key, THEME.accent()),
+                    Span::styled(format!(" {action}   "), THEME.muted()),
+                ]
+            })
+            .collect::<Vec<_>>(),
         ),
     };
     frame.render_widget(Paragraph::new(line).alignment(Alignment::Right), area);

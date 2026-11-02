@@ -8,16 +8,16 @@ use ratatui::widgets::{ListState, TableState};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::api::{self, Account};
+use crate::art::{self, AlbumArt};
 use crate::event::Event;
 use crate::lyrics::{self, Lyrics};
 use crate::media::{self, Command};
 use crate::model::{Playlist, Track};
-use crate::player::{Player, PlayerEvent};
-use crate::visualizer::Visualizer;
-use crate::art::{self, AlbumArt};
 use crate::palette::Palette;
+use crate::player::{Player, PlayerEvent};
 use crate::retro::ArtStyle;
 use crate::streams::{self, Streams};
+use crate::visualizer::Visualizer;
 
 const SEEK_STEP: f64 = 5.0;
 const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -202,14 +202,29 @@ impl App {
             focus: if signed_in { Focus::Library } else { Focus::Search },
             query: String::new(),
             account: None,
-            library: if signed_in { Library::Loading } else { Library::SignedOut },
+            library: if signed_in {
+                Library::Loading
+            } else {
+                Library::SignedOut
+            },
             library_state: ListState::default(),
             liked: HashSet::new(),
-            list: TrackList { title: "tracks".into(), tracks: Vec::new(), state: TableState::default(), loading: false },
+            list: TrackList {
+                title: "tracks".into(),
+                tracks: Vec::new(),
+                state: TableState::default(),
+                loading: false,
+            },
             queue: Vec::new(),
             queue_state: ListState::default(),
             current: None,
-            playback: Playback { position: 0.0, position_at: Instant::now(), duration: 0.0, paused: false, volume: 100.0 },
+            playback: Playback {
+                position: 0.0,
+                position_at: Instant::now(),
+                duration: 0.0,
+                paused: false,
+                volume: 100.0,
+            },
             shuffle: false,
             repeat: Repeat::Off,
             show_lyrics: false,
@@ -281,7 +296,11 @@ impl App {
                 self.visualizer.tick(playing.then(|| self.playback.current_position()));
                 self.expire_status();
             }
-            Event::Radio { request, replace, result } => self.handle_radio(request, replace, result).await?,
+            Event::Radio {
+                request,
+                replace,
+                result,
+            } => self.handle_radio(request, replace, result).await?,
             Event::Lyrics { video_id, result } => {
                 if self.lyrics.as_ref().is_some_and(|(id, _)| *id == video_id) {
                     let state = match result {
@@ -370,7 +389,9 @@ impl App {
                 _ => self.advance(Advance::Ended).await?,
             },
             PlayerEvent::TrackFailed => {
-                let Some(track) = self.now_playing().cloned() else { return Ok(()) };
+                let Some(track) = self.now_playing().cloned() else {
+                    return Ok(());
+                };
                 if self.streams.get(&track.video_id).is_some() {
                     // A pre-resolved URL can expire (after a long pause, say).
                     // Retry once through mpv's own resolution.
@@ -470,9 +491,7 @@ impl App {
             KeyCode::Enter if self.lyrics_have_focus() => {}
             KeyCode::Enter => self.activate_selected().await?,
             KeyCode::Char('a') if self.focus == Focus::Tracks => self.enqueue_selected().await?,
-            KeyCode::Char('d') | KeyCode::Delete if self.focus == Focus::Queue => {
-                self.remove_selected().await?
-            }
+            KeyCode::Char('d') | KeyCode::Delete if self.focus == Focus::Queue => self.remove_selected().await?,
             KeyCode::Char(' ') if self.current.is_some() => self.player.toggle_pause().await?,
             KeyCode::Char('n') => self.advance(Advance::Skip).await?,
             KeyCode::Char('s') => self.set_shuffle(!self.shuffle),
@@ -520,19 +539,29 @@ impl App {
             self.status = Some("Sign in to like songs: needledrop login --browser <name>".into());
             return;
         }
-        let Some(track) = self.target_track().cloned() else { return };
+        let Some(track) = self.target_track().cloned() else {
+            return;
+        };
         let liked = !self.liked.contains(&track.video_id);
         if liked {
             self.liked.insert(track.video_id.clone());
         } else {
             self.liked.remove(&track.video_id);
         }
-        self.status = Some(format!("{} “{}”", if liked { "Liked" } else { "Removed like from" }, track.title));
+        self.status = Some(format!(
+            "{} “{}”",
+            if liked { "Liked" } else { "Removed like from" },
+            track.title
+        ));
         let api = self.api.clone();
         let events = self.events.clone();
         tokio::spawn(async move {
             if let Err(error) = api.set_liked(&track.video_id, liked).await {
-                let _ = events.send(Event::LikeFailed { video_id: track.video_id, liked, error: format!("{error:#}") });
+                let _ = events.send(Event::LikeFailed {
+                    video_id: track.video_id,
+                    liked,
+                    error: format!("{error:#}"),
+                });
             }
         });
     }
@@ -545,7 +574,12 @@ impl App {
     {
         self.request += 1;
         let request = self.request;
-        self.list = TrackList { title, tracks: Vec::new(), state: TableState::default(), loading: true };
+        self.list = TrackList {
+            title,
+            tracks: Vec::new(),
+            state: TableState::default(),
+            loading: true,
+        };
         self.status = None;
         let api = self.api.clone();
         let events = self.events.clone();
@@ -560,12 +594,16 @@ impl App {
         if query.is_empty() {
             return;
         }
-        self.load_tracks(format!("search · {query}"), move |api| async move { api.search_songs(&query).await });
+        self.load_tracks(format!("search · {query}"), move |api| async move {
+            api.search_songs(&query).await
+        });
     }
 
     fn open_playlist(&mut self, playlist: Playlist) {
         self.focus = Focus::Tracks;
-        self.load_tracks(playlist.title, move |api| async move { api.playlist_tracks(&playlist.browse_id).await });
+        self.load_tracks(playlist.title, move |api| async move {
+            api.playlist_tracks(&playlist.browse_id).await
+        });
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -577,8 +615,13 @@ impl App {
                 let len = self.library.playlists().len();
                 self.library_state.select(step(self.library_state.selected(), len));
             }
-            Focus::Tracks => self.list.state.select(step(self.list.state.selected(), self.list.tracks.len())),
-            Focus::Queue => self.queue_state.select(step(self.queue_state.selected(), self.queue.len())),
+            Focus::Tracks => self
+                .list
+                .state
+                .select(step(self.list.state.selected(), self.list.tracks.len())),
+            Focus::Queue => self
+                .queue_state
+                .select(step(self.queue_state.selected(), self.queue.len())),
             Focus::Search => {}
         }
     }
@@ -588,14 +631,19 @@ impl App {
     async fn activate_selected(&mut self) -> Result<()> {
         match self.focus {
             Focus::Library => {
-                let selected = self.library_state.selected().and_then(|i| self.library.playlists().get(i));
+                let selected = self
+                    .library_state
+                    .selected()
+                    .and_then(|i| self.library.playlists().get(i));
                 if let Some(playlist) = selected.cloned() {
                     self.open_playlist(playlist);
                 }
                 Ok(())
             }
             Focus::Tracks => {
-                let Some(index) = self.list.state.selected() else { return Ok(()) };
+                let Some(index) = self.list.state.selected() else {
+                    return Ok(());
+                };
                 self.replace_queue(self.list.tracks.clone());
                 if self.shuffle {
                     // Start with the chosen track, then the rest in random order.
@@ -628,7 +676,9 @@ impl App {
     }
 
     async fn remove_selected(&mut self) -> Result<()> {
-        let Some(index) = self.queue_state.selected() else { return Ok(()) };
+        let Some(index) = self.queue_state.selected() else {
+            return Ok(());
+        };
         self.queue.remove(index);
         match self.current {
             Some(current) if current == index => {
@@ -653,8 +703,13 @@ impl App {
     /// Starts the queue entry at `index` in mpv: from its pre-resolved stream
     /// URL when there is one (starts at once), else its watch URL.
     async fn play(&mut self, index: usize) -> Result<()> {
-        let Some(track) = self.queue.get(index).cloned() else { return Ok(()) };
-        let url = self.streams.get(&track.video_id).map_or_else(|| track.url(), str::to_owned);
+        let Some(track) = self.queue.get(index).cloned() else {
+            return Ok(());
+        };
+        let url = self
+            .streams
+            .get(&track.video_id)
+            .map_or_else(|| track.url(), str::to_owned);
         self.enter_track(index);
         // `loadfile replace` also drops what mpv had queued.
         self.preloaded = None;
@@ -665,7 +720,9 @@ impl App {
     /// Playing, lyrics, autoplay) without touching mpv. Used both when we
     /// start a track and when mpv moves into a queued one by itself.
     fn enter_track(&mut self, index: usize) {
-        let Some(track) = self.queue.get(index).cloned() else { return };
+        let Some(track) = self.queue.get(index).cloned() else {
+            return;
+        };
         if self.now_playing().is_none_or(|t| t.video_id != track.video_id) {
             self.art = None;
             self.fetch_art(track.clone());
@@ -698,7 +755,10 @@ impl App {
         let want = self
             .current
             .and_then(|i| next_index(i, self.queue.len(), self.repeat, Advance::Ended))
-            .map(|index| Preloaded { index, video_id: self.queue[index].video_id.clone() });
+            .map(|index| Preloaded {
+                index,
+                video_id: self.queue[index].video_id.clone(),
+            });
         match (&mut self.preloaded, &want) {
             // Same song; its position may have shifted (a removal above it).
             (Some(have), Some(want)) if have.video_id == want.video_id => {
@@ -732,7 +792,10 @@ impl App {
         let events = self.events.clone();
         tokio::spawn(async move {
             let result = streams::resolve(&track).await.map_err(|e| format!("{e:#}"));
-            let _ = events.send(Event::Resolved { video_id: track.video_id, result });
+            let _ = events.send(Event::Resolved {
+                video_id: track.video_id,
+                result,
+            });
         });
     }
 
@@ -741,7 +804,10 @@ impl App {
         let events = self.events.clone();
         tokio::spawn(async move {
             if let Ok(image) = art::fetch(&url).await {
-                let _ = events.send(Event::Art { video_id: track.video_id, image });
+                let _ = events.send(Event::Art {
+                    video_id: track.video_id,
+                    image,
+                });
             }
         });
     }
@@ -778,8 +844,16 @@ impl App {
         let api = self.api.clone();
         let events = self.events.clone();
         tokio::spawn(async move {
-            let result = api.watch_next(&seed.video_id).await.map(|next| next.radio).map_err(|e| format!("{e:#}"));
-            let _ = events.send(Event::Radio { request, replace, result });
+            let result = api
+                .watch_next(&seed.video_id)
+                .await
+                .map(|next| next.radio)
+                .map_err(|e| format!("{e:#}"));
+            let _ = events.send(Event::Radio {
+                request,
+                replace,
+                result,
+            });
         });
     }
 
@@ -806,7 +880,8 @@ impl App {
             return self.play(0).await;
         }
         let known: std::collections::HashSet<String> = self.queue.iter().map(|t| t.video_id.clone()).collect();
-        self.queue.extend(tracks.into_iter().filter(|t| !known.contains(&t.video_id)));
+        self.queue
+            .extend(tracks.into_iter().filter(|t| !known.contains(&t.video_id)));
         match self.resume_at.take() {
             Some(start) if start < self.queue.len() => self.play(start).await,
             _ => Ok(()),
@@ -821,7 +896,9 @@ impl App {
     /// lyrics view or minimal mode) and they aren't loaded yet. Only then, so
     /// lyrics services never see what you play unless you look at lyrics.
     fn load_lyrics(&mut self) {
-        let Some(track) = self.now_playing().cloned() else { return };
+        let Some(track) = self.now_playing().cloned() else {
+            return;
+        };
         let visible = self.show_lyrics || self.minimal;
         if !visible || self.lyrics.as_ref().is_some_and(|(id, _)| *id == track.video_id) {
             return;
@@ -831,7 +908,10 @@ impl App {
         let events = self.events.clone();
         tokio::spawn(async move {
             let result = lyrics::fetch(&api, &track).await.map_err(|e| format!("{e:#}"));
-            let _ = events.send(Event::Lyrics { video_id: track.video_id, result });
+            let _ = events.send(Event::Lyrics {
+                video_id: track.video_id,
+                result,
+            });
         });
     }
 

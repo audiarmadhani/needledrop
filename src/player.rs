@@ -70,7 +70,9 @@ impl Player {
         tokio::spawn(async move {
             let mut lines = BufReader::new(reader).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
+                let Ok(message) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
                 if let Some(event) = parse_event(&message) {
                     let _ = events.send(Event::Player(event));
                 }
@@ -78,7 +80,11 @@ impl Player {
             let _ = events.send(Event::Player(PlayerEvent::Exited));
         });
 
-        let mut player = Self { writer, socket, _mpv: mpv };
+        let mut player = Self {
+            writer,
+            socket,
+            _mpv: mpv,
+        };
         for (id, property) in OBSERVED_PROPERTIES.iter().enumerate() {
             player.command(json!(["observe_property", id + 1, property])).await?;
         }
@@ -195,14 +201,29 @@ mod tests {
     #[test]
     fn parses_mpv_events() {
         let cases = [
-            (json!({"event":"property-change","id":1,"name":"time-pos","data":12.5}), Some(PlayerEvent::Position(12.5))),
+            (
+                json!({"event":"property-change","id":1,"name":"time-pos","data":12.5}),
+                Some(PlayerEvent::Position(12.5)),
+            ),
             (json!({"event":"property-change","id":1,"name":"time-pos"}), None),
-            (json!({"event":"property-change","id":3,"name":"pause","data":true}), Some(PlayerEvent::Paused(true))),
-            (json!({"event":"end-file","reason":"eof"}), Some(PlayerEvent::TrackEnded)),
+            (
+                json!({"event":"property-change","id":3,"name":"pause","data":true}),
+                Some(PlayerEvent::Paused(true)),
+            ),
+            (
+                json!({"event":"end-file","reason":"eof"}),
+                Some(PlayerEvent::TrackEnded),
+            ),
             (json!({"event":"end-file","reason":"stop"}), None),
-            (json!({"event":"end-file","reason":"error","file_error":"x"}), Some(PlayerEvent::TrackFailed)),
+            (
+                json!({"event":"end-file","reason":"error","file_error":"x"}),
+                Some(PlayerEvent::TrackFailed),
+            ),
             (json!({"data":null,"error":"success","request_id":0}), None),
-            (json!({"event":"property-change","name":"stream-open-filename","data":"https://music.youtube.com/watch?v=x"}), None),
+            (
+                json!({"event":"property-change","name":"stream-open-filename","data":"https://music.youtube.com/watch?v=x"}),
+                None,
+            ),
             (
                 json!({"event":"property-change","name":"stream-open-filename","data":"edl://!new_stream;!no_clip;%32%https://r1.googlevideo.com/a;b=1;!global_tags,x=%3%abc"}),
                 Some(PlayerEvent::Stream("https://r1.googlevideo.com/a;b=1".into())),

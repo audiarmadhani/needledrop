@@ -99,7 +99,10 @@ impl Credentials {
         let Some(browser) = self.browser else { return self };
         match Self::from_browser(browser) {
             Ok(fresh) => {
-                let fresh = Self { account: self.account, ..fresh };
+                let fresh = Self {
+                    account: self.account,
+                    ..fresh
+                };
                 let _ = fresh.save();
                 fresh
             }
@@ -130,7 +133,10 @@ impl Credentials {
     }
 
     pub fn with_account(&self, account: u32) -> Self {
-        Self { account, ..self.clone() }
+        Self {
+            account,
+            ..self.clone()
+        }
     }
 
     pub fn from_browser(browser: Browser) -> Result<Self> {
@@ -161,14 +167,21 @@ impl Credentials {
                 value: c.value,
             })
             .collect();
-        Self::validated(Self { cookies, account: 0, browser: Some(browser) })
-            .with_context(|| format!("sign in to music.youtube.com in {browser:?} first"))
+        Self::validated(Self {
+            cookies,
+            account: 0,
+            browser: Some(browser),
+        })
+        .with_context(|| format!("sign in to music.youtube.com in {browser:?} first"))
     }
 
     /// Builds credentials from a `Cookie:` request header copied from devtools.
     pub fn from_cookie_header(header: &str) -> Result<Self> {
         let header = header.trim();
-        let header = header.strip_prefix("Cookie:").or_else(|| header.strip_prefix("cookie:")).unwrap_or(header);
+        let header = header
+            .strip_prefix("Cookie:")
+            .or_else(|| header.strip_prefix("cookie:"))
+            .unwrap_or(header);
         let cookies = header
             .split(';')
             .filter_map(|pair| pair.trim().split_once('='))
@@ -181,7 +194,11 @@ impl Credentials {
                 value: value.trim().to_owned(),
             })
             .collect();
-        Self::validated(Self { cookies, account: 0, browser: None })
+        Self::validated(Self {
+            cookies,
+            account: 0,
+            browser: None,
+        })
     }
 
     fn validated(self) -> Result<Self> {
@@ -218,7 +235,8 @@ impl Credentials {
     }
 
     fn to_netscape(&self) -> String {
-        let mut text = String::from("# Netscape HTTP Cookie File\n# Written by needledrop. Keep this file private.\n\n");
+        let mut text =
+            String::from("# Netscape HTTP Cookie File\n# Written by needledrop. Keep this file private.\n\n");
         for c in &self.cookies {
             let flag = if c.domain.starts_with('.') { "TRUE" } else { "FALSE" };
             let secure = if c.secure { "TRUE" } else { "FALSE" };
@@ -237,7 +255,9 @@ impl Credentials {
             .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
             .filter_map(|line| {
                 let fields: Vec<&str> = line.split('\t').collect();
-                let [domain, _, path, secure, expires, name, value] = fields[..] else { return None };
+                let [domain, _, path, secure, expires, name, value] = fields[..] else {
+                    return None;
+                };
                 Some(Cookie {
                     domain: domain.to_owned(),
                     path: path.to_owned(),
@@ -248,7 +268,11 @@ impl Credentials {
                 })
             })
             .collect();
-        Self { cookies, account: 0, browser: None }
+        Self {
+            cookies,
+            account: 0,
+            browser: None,
+        }
     }
 }
 
@@ -324,9 +348,18 @@ mod tests {
     #[test]
     fn skips_expired_and_duplicate_cookies() {
         let cookie = |name: &str, expires| Cookie {
-            domain: ".youtube.com".into(), path: "/".into(), secure: true, expires, name: name.into(), value: "v".into(),
+            domain: ".youtube.com".into(),
+            path: "/".into(),
+            secure: true,
+            expires,
+            name: name.into(),
+            value: "v".into(),
         };
-        let creds = Credentials { account: 0, browser: None, cookies: vec![cookie("OLD", 1), cookie("SID", 0), cookie("SID", 0)] };
+        let creds = Credentials {
+            account: 0,
+            browser: None,
+            cookies: vec![cookie("OLD", 1), cookie("SID", 0), cookie("SID", 0)],
+        };
         assert_eq!(creds.cookie_header(), "SID=v");
     }
 }

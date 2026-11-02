@@ -25,7 +25,10 @@ pub struct Streams {
 impl Streams {
     /// A still-fresh stream URL for the track, if one was resolved.
     pub fn get(&self, video_id: &str) -> Option<&str> {
-        self.urls.get(video_id).filter(|(_, at)| at.elapsed() < TTL).map(|(url, _)| url.as_str())
+        self.urls
+            .get(video_id)
+            .filter(|(_, at)| at.elapsed() < TTL)
+            .map(|(url, _)| url.as_str())
     }
 
     pub fn insert(&mut self, video_id: String, url: String) {
@@ -44,7 +47,14 @@ impl Streams {
 /// mpv uses.
 pub async fn resolve(track: &Track) -> Result<String> {
     let output = Command::new("yt-dlp")
-        .args(["--format", "bestaudio/best", "--get-url", "--no-playlist", "--no-warnings", "--quiet"])
+        .args([
+            "--format",
+            "bestaudio/best",
+            "--get-url",
+            "--no-playlist",
+            "--no-warnings",
+            "--quiet",
+        ])
         .arg(track.url())
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true)
@@ -60,7 +70,11 @@ pub async fn resolve(track: &Track) -> Result<String> {
 /// One URL per line; a format with separate audio and video would give two,
 /// and the first is the one to play.
 fn parse_url(stdout: &str) -> Option<String> {
-    stdout.lines().map(str::trim).find(|line| line.starts_with("https://")).map(str::to_owned)
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("https://"))
+        .map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -69,8 +83,14 @@ mod tests {
 
     #[test]
     fn takes_the_first_url_line() {
-        assert_eq!(parse_url("https://a.googlevideo.com/x\nhttps://b/y\n").as_deref(), Some("https://a.googlevideo.com/x"));
-        assert_eq!(parse_url("WARNING: something\nhttps://a/x\n").as_deref(), Some("https://a/x"));
+        assert_eq!(
+            parse_url("https://a.googlevideo.com/x\nhttps://b/y\n").as_deref(),
+            Some("https://a.googlevideo.com/x")
+        );
+        assert_eq!(
+            parse_url("WARNING: something\nhttps://a/x\n").as_deref(),
+            Some("https://a/x")
+        );
         assert_eq!(parse_url("ERROR: unavailable\n"), None);
     }
 
@@ -81,7 +101,9 @@ mod tests {
         assert_eq!(streams.get("v"), Some("https://a/x"));
         streams.forget("v");
         assert_eq!(streams.get("v"), None);
-        streams.urls.insert("old".into(), ("https://a/y".into(), Instant::now() - TTL));
+        streams
+            .urls
+            .insert("old".into(), ("https://a/y".into(), Instant::now() - TTL));
         assert_eq!(streams.get("old"), None, "expired");
     }
 }

@@ -25,7 +25,13 @@ const SOURCE_SIZE: u32 = 128;
 static HTTP: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 pub async fn fetch(url: &str) -> Result<DynamicImage> {
-    let bytes = HTTP.get(high_res_url(url)).send().await?.error_for_status()?.bytes().await?;
+    let bytes = HTTP
+        .get(high_res_url(url))
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
     let image = image::load_from_memory(&bytes)?;
     let side = image.width().min(image.height());
     let square = image.crop_imm((image.width() - side) / 2, (image.height() - side) / 2, side, side);
@@ -57,7 +63,10 @@ pub struct AlbumArt {
 
 impl AlbumArt {
     pub fn new(image: DynamicImage) -> Self {
-        Self { source: image.into_rgb8(), pixels: None }
+        Self {
+            source: image.into_rgb8(),
+            pixels: None,
+        }
     }
 
     /// The image at `side`×`side` pixels in `style`, reusing the last result.
@@ -129,14 +138,30 @@ mod tests {
     fn draws_two_pixels_per_cell_as_a_centered_square() {
         // Top row PICO-8 red, bottom row PICO-8 blue: already the drawn size
         // and already in the palette, so they come through unchanged.
-        let image = RgbImage::from_fn(2, 2, |_, y| if y == 0 { image::Rgb([0xFF, 0x00, 0x4D]) } else { image::Rgb([0x29, 0xAD, 0xFF]) });
+        let image = RgbImage::from_fn(2, 2, |_, y| {
+            if y == 0 {
+                image::Rgb([0xFF, 0x00, 0x4D])
+            } else {
+                image::Rgb([0x29, 0xAD, 0xFF])
+            }
+        });
         let mut art = AlbumArt::new(DynamicImage::ImageRgb8(image));
         let area = Rect::new(0, 0, 6, 1);
         let mut buf = Buffer::empty(area);
-        PixelArt { style: ArtStyle::Pico8, palette: None }.render(area, &mut buf, &mut art);
+        PixelArt {
+            style: ArtStyle::Pico8,
+            palette: None,
+        }
+        .render(area, &mut buf, &mut art);
         // A 1-row area fits a 2×2 pixel square, centered in 6 columns.
-        let cells: Vec<_> = (0..6).map(|x| (buf[(x, 0)].symbol().to_owned(), buf[(x, 0)].fg, buf[(x, 0)].bg)).collect();
-        let expected = ("▀".to_owned(), Color::Rgb(0xFF, 0x00, 0x4D), Color::Rgb(0x29, 0xAD, 0xFF));
+        let cells: Vec<_> = (0..6)
+            .map(|x| (buf[(x, 0)].symbol().to_owned(), buf[(x, 0)].fg, buf[(x, 0)].bg))
+            .collect();
+        let expected = (
+            "▀".to_owned(),
+            Color::Rgb(0xFF, 0x00, 0x4D),
+            Color::Rgb(0x29, 0xAD, 0xFF),
+        );
         assert_eq!(cells[2], expected);
         assert_eq!(cells[3], expected);
         assert_eq!(cells[0].0, " ");

@@ -67,14 +67,23 @@ pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
     for word in text.split_whitespace() {
         let mut word = word.to_owned();
         while word.width() > width {
-            let split = word.char_indices().map(|(i, _)| i).take_while(|&i| word[..i].width() <= width).last().unwrap_or(1);
+            let split = word
+                .char_indices()
+                .map(|(i, _)| i)
+                .take_while(|&i| word[..i].width() <= width)
+                .last()
+                .unwrap_or(1);
             let rest = word.split_off(split.max(1));
             if !line.is_empty() {
                 lines.push(std::mem::take(&mut line));
             }
             lines.push(std::mem::replace(&mut word, rest));
         }
-        let needed = if line.is_empty() { word.width() } else { line.width() + 1 + word.width() };
+        let needed = if line.is_empty() {
+            word.width()
+        } else {
+            line.width() + 1 + word.width()
+        };
         if needed > width && !line.is_empty() {
             lines.push(std::mem::take(&mut line));
         }
@@ -104,7 +113,11 @@ pub(crate) fn current_lyrics(app: &App) -> Option<&Lyrics> {
 }
 
 pub(crate) fn visual(app: &App) -> Visual<'_> {
-    Visual { visualizer: &app.visualizer, colors: &THEME.spectrum, accent: THEME.text }
+    Visual {
+        visualizer: &app.visualizer,
+        colors: &THEME.spectrum,
+        accent: THEME.text,
+    }
 }
 
 fn panel(title: impl std::fmt::Display, focused: bool) -> Block<'static> {
@@ -116,7 +129,10 @@ fn panel(title: impl std::fmt::Display, focused: bool) -> Block<'static> {
 
 fn render_search(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focus == Focus::Search;
-    let mut brand = vec![Span::styled(" ◉ ", THEME.accent()), Span::styled("needledrop ", THEME.title(true))];
+    let mut brand = vec![
+        Span::styled(" ◉ ", THEME.accent()),
+        Span::styled("needledrop ", THEME.title(true)),
+    ];
     if let Some(account) = &app.account {
         brand.push(Span::styled(format!("· {} ", account.name), THEME.muted()));
     }
@@ -124,7 +140,10 @@ fn render_search(app: &App, frame: &mut Frame, area: Rect) {
     let text = if app.query.is_empty() && !focused {
         Line::styled("Press / to search YouTube Music", THEME.muted())
     } else {
-        Line::from(vec![Span::styled("› ", THEME.accent()), Span::styled(&app.query, THEME.text())])
+        Line::from(vec![
+            Span::styled("› ", THEME.accent()),
+            Span::styled(&app.query, THEME.text()),
+        ])
     };
     let inner = block.inner(area);
     frame.render_widget(Paragraph::new(text).block(block), area);
@@ -148,11 +167,17 @@ fn render_library(app: &mut App, frame: &mut Frame, area: Rect) {
         )),
     };
     if let Some((text, style)) = message {
-        let paragraph = Paragraph::new(text).style(style).wrap(ratatui::widgets::Wrap { trim: true });
+        let paragraph = Paragraph::new(text)
+            .style(style)
+            .wrap(ratatui::widgets::Wrap { trim: true });
         frame.render_widget(paragraph.block(block), area);
         return;
     }
-    let items = app.library.playlists().iter().map(|playlist| ListItem::new(playlist.title.as_str()));
+    let items = app
+        .library
+        .playlists()
+        .iter()
+        .map(|playlist| ListItem::new(playlist.title.as_str()));
     let list = List::new(items)
         .block(block)
         .highlight_style(if focused { THEME.selection() } else { Style::new() });
@@ -162,9 +187,16 @@ fn render_library(app: &mut App, frame: &mut Frame, area: Rect) {
 fn render_lyrics(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focus == Focus::Tracks;
     let track = app.now_playing();
-    let mut block = panel(format!("lyrics{}", track.map(|t| format!(" · {}", t.title)).unwrap_or_default()), focused);
+    let mut block = panel(
+        format!("lyrics{}", track.map(|t| format!(" · {}", t.title)).unwrap_or_default()),
+        focused,
+    );
     let inner = block.inner(area);
-    let message = |text: &str| Paragraph::new(text.to_owned()).style(THEME.muted()).alignment(Alignment::Center);
+    let message = |text: &str| {
+        Paragraph::new(text.to_owned())
+            .style(THEME.muted())
+            .alignment(Alignment::Center)
+    };
     let centered = |height: u16| {
         let [_, middle, _] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(height), Constraint::Fill(1)]).areas(inner);
@@ -195,11 +227,20 @@ fn render_lyrics(app: &App, frame: &mut Frame, area: Rect) {
 
     let width = inner.width as usize;
     let wrapped = |text: &str, style: Style| -> Vec<Line<'static>> {
-        wrap(lyric_text(text), width).into_iter().map(|row| Line::styled(row, style)).collect()
+        wrap(lyric_text(text), width)
+            .into_iter()
+            .map(|row| Line::styled(row, style))
+            .collect()
     };
     if !lyrics.synced {
-        let lines: Vec<Line> = lyrics.lines.iter().flat_map(|l| wrapped(&l.text, THEME.text())).collect();
-        let paragraph = Paragraph::new(lines).alignment(Alignment::Center).scroll((app.lyrics_scroll, 0));
+        let lines: Vec<Line> = lyrics
+            .lines
+            .iter()
+            .flat_map(|l| wrapped(&l.text, THEME.text()))
+            .collect();
+        let paragraph = Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .scroll((app.lyrics_scroll, 0));
         frame.render_widget(paragraph, inner);
         return;
     }
@@ -241,41 +282,62 @@ fn render_tracks(app: &mut App, frame: &mut Frame, area: Rect) {
     let block = panel(title, focused);
 
     if list.tracks.is_empty() {
-        let hint = if list.loading { "Loading…" } else { "Pick a playlist, or press / to search" };
+        let hint = if list.loading {
+            "Loading…"
+        } else {
+            "Pick a playlist, or press / to search"
+        };
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let [_, middle, _] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
-        frame.render_widget(Paragraph::new(hint).style(THEME.muted()).alignment(Alignment::Center), middle);
+        frame.render_widget(
+            Paragraph::new(hint).style(THEME.muted()).alignment(Alignment::Center),
+            middle,
+        );
         return;
     }
 
     let liked = &app.liked;
     let rows = list.tracks.iter().map(|track| {
         let is_playing = playing_id == Some(track.video_id.as_str());
-        let marker = if is_playing { Span::styled("▶", Style::new().fg(THEME.playing)) } else { Span::raw(" ") };
-        let title_style = if is_playing { Style::new().fg(THEME.playing) } else { THEME.text() };
+        let marker = if is_playing {
+            Span::styled("▶", Style::new().fg(THEME.playing))
+        } else {
+            Span::raw(" ")
+        };
+        let title_style = if is_playing {
+            Style::new().fg(THEME.playing)
+        } else {
+            THEME.text()
+        };
         Row::new(vec![
             Line::from(marker),
             Line::from(heart(liked.contains(&track.video_id))),
             Line::styled(track.title.as_str(), title_style),
             Line::styled(track.artists.as_str(), THEME.muted()),
             Line::styled(track.album.as_deref().unwrap_or(""), THEME.muted()),
-            Line::styled(track.duration.map(|d| format_time(d.as_secs_f64())).unwrap_or_default(), THEME.muted())
-                .alignment(Alignment::Right),
+            Line::styled(
+                track.duration.map(|d| format_time(d.as_secs_f64())).unwrap_or_default(),
+                THEME.muted(),
+            )
+            .alignment(Alignment::Right),
         ])
     });
     let header = Row::new(["", "", "Title", "Artist", "Album", "Time"])
         .style(THEME.muted().add_modifier(Modifier::BOLD))
         .bottom_margin(1);
-    let table = Table::new(rows, [
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Fill(3),
-        Constraint::Fill(2),
-        Constraint::Fill(2),
-        Constraint::Length(7),
-    ])
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Fill(3),
+            Constraint::Fill(2),
+            Constraint::Fill(2),
+            Constraint::Length(7),
+        ],
+    )
     .header(header)
     .column_spacing(2)
     .block(block)
@@ -312,11 +374,21 @@ fn render_now_playing(app: &mut App, frame: &mut Frame, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     // Terminal cells are about twice as tall as wide, so 2 columns per row is square.
-    let [art_area, _, details] =
-        Layout::horizontal([Constraint::Length(inner.height * 2), Constraint::Length(2), Constraint::Fill(1)])
-            .areas(inner);
+    let [art_area, _, details] = Layout::horizontal([
+        Constraint::Length(inner.height * 2),
+        Constraint::Length(2),
+        Constraint::Fill(1),
+    ])
+    .areas(inner);
     match &mut app.art {
-        Some(art) => frame.render_stateful_widget(PixelArt { style: app.art_style, palette: app.palette }, art_area, art),
+        Some(art) => frame.render_stateful_widget(
+            PixelArt {
+                style: app.art_style,
+                palette: app.palette,
+            },
+            art_area,
+            art,
+        ),
         None => render_art_placeholder(frame, art_area),
     }
 
@@ -345,7 +417,10 @@ fn render_now_playing(app: &mut App, frame: &mut Frame, area: Rect) {
     let toggle = |on: bool| if on { THEME.accent() } else { THEME.muted() };
     let modes = Line::from(vec![
         Span::styled("⇄ ", toggle(app.shuffle)),
-        Span::styled(if app.repeat == Repeat::One { "↻¹ " } else { "↻  " }, toggle(app.repeat != Repeat::Off)),
+        Span::styled(
+            if app.repeat == Repeat::One { "↻¹ " } else { "↻  " },
+            toggle(app.repeat != Repeat::Off),
+        ),
         Span::styled(format!("vol {:>3.0}% ", playback.volume), THEME.muted()),
     ]);
     let [title_area, modes_area] =
@@ -360,7 +435,11 @@ fn render_now_playing(app: &mut App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(format!("   {byline}")).style(THEME.muted()), subtitle);
 
     let position = playback.current_position().min(playback.duration.max(0.0));
-    let ratio = if playback.duration > 0.0 { (position / playback.duration).clamp(0.0, 1.0) } else { 0.0 };
+    let ratio = if playback.duration > 0.0 {
+        (position / playback.duration).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let label = format!("{} / {} ", format_time(position), format_time(playback.duration));
     let gauge = LineGauge::default()
         .ratio(ratio)
@@ -374,8 +453,12 @@ pub(crate) fn render_art_placeholder(frame: &mut Frame, area: Rect) {
     let block = Block::new().style(Style::new().bg(THEME.selection_bg));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let [_, middle, _] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
-    frame.render_widget(Paragraph::new("♪").style(THEME.muted()).alignment(Alignment::Center), middle);
+    let [_, middle, _] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
+    frame.render_widget(
+        Paragraph::new("♪").style(THEME.muted()).alignment(Alignment::Center),
+        middle,
+    );
 }
 
 fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
@@ -390,24 +473,70 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
     }
     let keys: &[(&str, &str)] = match app.focus {
         Focus::Search => &[("enter", "search"), ("esc", "back"), ("ctrl-c", "quit")],
-        Focus::Library => &[("enter", "open"), ("/", "search"), ("space", "pause"), ("n/p", "next/prev"), ("f", "like playing"), ("ctrl-r", "refresh"), ("tab", "tracks"), ("q", "quit")],
-        Focus::Tracks => &[("enter", "play"), ("a", "queue"), ("/", "search"), ("space", "pause"), ("n/p", "next/prev"), ("←/→", "seek"), ("s", "shuffle"), ("r", "repeat"), ("f", "like"), ("R", "radio"), ("L", "lyrics"), ("M", "minimal"), ("V", "visualizer"), ("A", "art"), ("q", "quit")],
-        Focus::Queue => &[("enter", "play"), ("d", "remove"), ("R", "radio"), ("space", "pause"), ("n/p", "next/prev"), ("←/→", "seek"), ("L", "lyrics"), ("M", "minimal"), ("q", "quit")],
+        Focus::Library => &[
+            ("enter", "open"),
+            ("/", "search"),
+            ("space", "pause"),
+            ("n/p", "next/prev"),
+            ("f", "like playing"),
+            ("ctrl-r", "refresh"),
+            ("tab", "tracks"),
+            ("q", "quit"),
+        ],
+        Focus::Tracks => &[
+            ("enter", "play"),
+            ("a", "queue"),
+            ("/", "search"),
+            ("space", "pause"),
+            ("n/p", "next/prev"),
+            ("←/→", "seek"),
+            ("s", "shuffle"),
+            ("r", "repeat"),
+            ("f", "like"),
+            ("R", "radio"),
+            ("L", "lyrics"),
+            ("M", "minimal"),
+            ("V", "visualizer"),
+            ("A", "art"),
+            ("q", "quit"),
+        ],
+        Focus::Queue => &[
+            ("enter", "play"),
+            ("d", "remove"),
+            ("R", "radio"),
+            ("space", "pause"),
+            ("n/p", "next/prev"),
+            ("←/→", "seek"),
+            ("L", "lyrics"),
+            ("M", "minimal"),
+            ("q", "quit"),
+        ],
     };
     let spans = keys.iter().flat_map(|(key, action)| {
-        [Span::styled(format!(" {key}"), THEME.accent()), Span::styled(format!(" {action} "), THEME.muted())]
+        [
+            Span::styled(format!(" {key}"), THEME.accent()),
+            Span::styled(format!(" {action} "), THEME.muted()),
+        ]
     });
     frame.render_widget(Paragraph::new(Line::from_iter(spans)), area);
 }
 
 pub(crate) fn heart(liked: bool) -> Span<'static> {
-    if liked { Span::styled("♥", Style::new().fg(THEME.error)) } else { Span::raw(" ") }
+    if liked {
+        Span::styled("♥", Style::new().fg(THEME.error))
+    } else {
+        Span::raw(" ")
+    }
 }
 
 pub(crate) fn format_time(seconds: f64) -> String {
     let total = seconds.max(0.0) as u64;
     let (hours, minutes, secs) = (total / 3600, total / 60 % 60, total % 60);
-    if hours > 0 { format!("{hours}:{minutes:02}:{secs:02}") } else { format!("{minutes}:{secs:02}") }
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{secs:02}")
+    } else {
+        format!("{minutes}:{secs:02}")
+    }
 }
 
 #[cfg(test)]
