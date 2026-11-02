@@ -79,7 +79,7 @@ Without signing in, search and playback still work.
 | `enter` | Play a song (queueing its list or shelf), or open an album, artist, or playlist |
 | `esc` / `backspace` | Back to the previous page |
 | `i` / `o` | Open the selected (or playing) song's artist / album |
-| `/` | Search |
+| `/` | Search (keeps your last search; `ctrl-u` clears it) |
 | `a` | Add the selected track to the queue |
 | `N` | Play the selected track next (in the queue: move it up to next) |
 | `P` | Add the selected (or playing) track to one of your playlists, or a new one |
