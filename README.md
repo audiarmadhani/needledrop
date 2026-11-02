@@ -120,6 +120,9 @@ artist, album, and length only when you look at its lyrics.
   reference for its response shapes.
 - `src/player.rs`: runs `mpv` as a child process and controls it over its JSON
   IPC socket.
+- `src/streams.rs`: gapless playback. While a song plays, needledrop resolves
+  the next one's stream URL with yt-dlp and queues it in mpv's playlist, so
+  mpv plays straight into it instead of pausing ~5 seconds to look it up.
 - `src/visualizer.rs`: decodes the same stream again with ffmpeg and runs an
   FFT at mpv's playback position, so the bars stay in sync through seeks.
 - `src/media.rs`: OS media controls. On macOS they need the main thread's run

@@ -35,6 +35,8 @@ pub enum Event {
     Liked(Vec<String>),
     /// A like or unlike didn't go through; undo it locally.
     LikeFailed { video_id: String, liked: bool, error: String },
+    /// A track's direct stream URL, resolved ahead of time.
+    Resolved { video_id: String, result: Result<String, String> },
     /// Album art for the track with this video id.
     Art { video_id: String, image: image::DynamicImage },
 }

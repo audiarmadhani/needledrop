@@ -17,6 +17,7 @@ use crate::visualizer::Visualizer;
 use crate::art::{self, AlbumArt};
 use crate::palette::Palette;
 use crate::retro::ArtStyle;
+use crate::streams::{self, Streams};
 
 const SEEK_STEP: f64 = 5.0;
 const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -93,6 +94,13 @@ impl Repeat {
     }
 }
 
+/// The queue entry handed to mpv to play after the current one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Preloaded {
+    index: usize,
+    video_id: String,
+}
+
 /// Why playback is moving to another track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Advance {
@@ -167,6 +175,12 @@ pub struct App {
     pub should_quit: bool,
     /// Id of the latest track-list load; older responses are ignored.
     request: u64,
+    /// Direct stream URLs resolved ahead of time, for gapless playback.
+    streams: Streams,
+    /// Video ids being resolved right now.
+    resolving: HashSet<String>,
+    /// The queue entry mpv has queued to play next, if any.
+    preloaded: Option<Preloaded>,
     /// Id of the latest radio load. Bumped whenever the queue is replaced,
     /// so a radio meant to extend the old queue is ignored.
     radio_request: u64,
@@ -210,6 +224,9 @@ impl App {
             status_seen: None,
             should_quit: false,
             request: 0,
+            streams: Streams::default(),
+            resolving: HashSet::new(),
+            preloaded: None,
             radio_request: 0,
             radio_loading: false,
             resume_at: None,
@@ -247,6 +264,13 @@ impl App {
     }
 
     pub async fn handle(&mut self, event: Event) -> Result<()> {
+        self.handle_event(event).await?;
+        // Whatever just happened (a skip, a shuffle, a removal, a radio
+        // landing), make sure mpv has the right song queued next.
+        self.refresh_preload().await
+    }
+
+    async fn handle_event(&mut self, event: Event) -> Result<()> {
         match event {
             Event::Key(key) => self.handle_key(key).await?,
             Event::Resize => {}
@@ -277,6 +301,12 @@ impl App {
                     self.liked.insert(video_id);
                 }
                 self.status = Some(format!("Couldn't update your likes: {error}"));
+            }
+            Event::Resolved { video_id, result } => {
+                self.resolving.remove(&video_id);
+                if let Ok(url) = result {
+                    self.streams.insert(video_id, url);
+                }
             }
             Event::Art { video_id, image } => {
                 if self.now_playing().is_some_and(|t| t.video_id == video_id) {
@@ -332,11 +362,22 @@ impl App {
                 self.report_playback();
             }
             PlayerEvent::Volume(volume) => self.playback.volume = volume,
-            PlayerEvent::TrackEnded => self.advance(Advance::Ended).await?,
-            PlayerEvent::TrackFailed => {
-                if let Some(track) = self.now_playing() {
-                    self.status = Some(format!("Couldn't play “{}”, skipping", track.title));
+            PlayerEvent::TrackEnded => match self.preloaded.take() {
+                // mpv has already moved on to the queued song: just follow it.
+                Some(next) if self.queue.get(next.index).is_some_and(|t| t.video_id == next.video_id) => {
+                    self.enter_track(next.index);
                 }
+                _ => self.advance(Advance::Ended).await?,
+            },
+            PlayerEvent::TrackFailed => {
+                let Some(track) = self.now_playing().cloned() else { return Ok(()) };
+                if self.streams.get(&track.video_id).is_some() {
+                    // A pre-resolved URL can expire (after a long pause, say).
+                    // Retry once through mpv's own resolution.
+                    self.streams.forget(&track.video_id);
+                    return self.play(self.current.expect("a track is playing")).await;
+                }
+                self.status = Some(format!("Couldn't play “{}”, skipping", track.title));
                 self.advance(Advance::Skip).await?;
             }
             PlayerEvent::Exited => bail!("mpv exited unexpectedly"),
@@ -609,9 +650,22 @@ impl App {
         Ok(())
     }
 
+    /// Starts the queue entry at `index` in mpv: from its pre-resolved stream
+    /// URL when there is one (starts at once), else its watch URL.
     async fn play(&mut self, index: usize) -> Result<()> {
         let Some(track) = self.queue.get(index).cloned() else { return Ok(()) };
-        let url = track.url();
+        let url = self.streams.get(&track.video_id).map_or_else(|| track.url(), str::to_owned);
+        self.enter_track(index);
+        // `loadfile replace` also drops what mpv had queued.
+        self.preloaded = None;
+        self.player.load(&url).await
+    }
+
+    /// Makes the entry at `index` the current track in the app (art, Now
+    /// Playing, lyrics, autoplay) without touching mpv. Used both when we
+    /// start a track and when mpv moves into a queued one by itself.
+    fn enter_track(&mut self, index: usize) {
+        let Some(track) = self.queue.get(index).cloned() else { return };
         if self.now_playing().is_none_or(|t| t.video_id != track.video_id) {
             self.art = None;
             self.fetch_art(track.clone());
@@ -635,7 +689,51 @@ impl App {
         if self.repeat == Repeat::Off && index + 1 == self.queue.len() {
             self.start_radio(track.clone(), false);
         }
-        self.player.load(&url).await
+    }
+
+    /// Keeps mpv's queued next song in line with the app's queue: the entry
+    /// that will play when the current one ends, given repeat mode. Resolves
+    /// its stream URL first if needed; idempotent, so it runs after every event.
+    async fn refresh_preload(&mut self) -> Result<()> {
+        let want = self
+            .current
+            .and_then(|i| next_index(i, self.queue.len(), self.repeat, Advance::Ended))
+            .map(|index| Preloaded { index, video_id: self.queue[index].video_id.clone() });
+        match (&mut self.preloaded, &want) {
+            // Same song; its position may have shifted (a removal above it).
+            (Some(have), Some(want)) if have.video_id == want.video_id => {
+                have.index = want.index;
+                return Ok(());
+            }
+            (None, None) => return Ok(()),
+            _ => {}
+        }
+        if self.preloaded.take().is_some() {
+            self.player.clear_preloaded().await?;
+        }
+        let Some(want) = want else { return Ok(()) };
+        match self.streams.get(&want.video_id) {
+            Some(url) => {
+                let url = url.to_owned();
+                self.player.preload(&url).await?;
+                self.preloaded = Some(want);
+            }
+            None => self.resolve(self.queue[want.index].clone()),
+        }
+        Ok(())
+    }
+
+    /// Resolves a track's stream URL in the background; `Event::Resolved`
+    /// stores it, and the next `refresh_preload` queues it.
+    fn resolve(&mut self, track: Track) {
+        if !self.resolving.insert(track.video_id.clone()) {
+            return;
+        }
+        let events = self.events.clone();
+        tokio::spawn(async move {
+            let result = streams::resolve(&track).await.map_err(|e| format!("{e:#}"));
+            let _ = events.send(Event::Resolved { video_id: track.video_id, result });
+        });
     }
 
     fn fetch_art(&self, track: Track) {
@@ -792,6 +890,8 @@ impl App {
 
     async fn stop(&mut self) -> Result<()> {
         self.current = None;
+        // mpv's `stop` clears its playlist, queued song included.
+        self.preloaded = None;
         self.resume_at = None;
         self.art = None;
         self.visualizer.clear();

@@ -53,6 +53,9 @@ impl Player {
                 "--no-video",
                 "--no-terminal",
                 "--ytdl-format=bestaudio/best",
+                // With the next song queued in mpv's playlist, play straight into it.
+                "--gapless-audio=yes",
+                "--prefetch-playlist=yes",
             ])
             .arg(format!("--input-ipc-server={}", socket.display()))
             .stdin(Stdio::null())
@@ -85,6 +88,18 @@ impl Player {
     pub async fn load(&mut self, url: &str) -> Result<()> {
         self.command(json!(["loadfile", url, "replace"])).await?;
         self.command(json!(["set_property", "pause", false])).await
+    }
+
+    /// Queues `url` to play right after the current file, replacing anything
+    /// queued before. mpv opens it ahead of time and plays into it gaplessly.
+    pub async fn preload(&mut self, url: &str) -> Result<()> {
+        self.clear_preloaded().await?;
+        self.command(json!(["loadfile", url, "append"])).await
+    }
+
+    /// Drops whatever is queued after the current file.
+    pub async fn clear_preloaded(&mut self) -> Result<()> {
+        self.command(json!(["playlist-clear"])).await
     }
 
     pub async fn toggle_pause(&mut self) -> Result<()> {

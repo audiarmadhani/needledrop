@@ -12,6 +12,7 @@ mod model;
 mod palette;
 mod player;
 mod retro;
+mod streams;
 mod theme;
 mod ui;
 mod visualizer;
