@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>needledrop · YouTube Music in your terminal</title>
+<meta name="description" content="A good-looking terminal client for YouTube Music, written in Rust. 8-bit album art, synced visualizers, time-synced lyrics, and an endless queue.">
+<meta property="og:title" content="needledrop">
+<meta property="og:description" content="A good-looking terminal client for YouTube Music, written in Rust.">
+<meta property="og:image" content="https://audiarmadhani.github.io/needledrop/assets/screens/playing.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#1d2b53">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* PICO-8, as in the app icon */
+    --navy: #1d2b53;
+    --navy-hi: #29366f;
+    --ink: #0e0e14;
+    --panel: #151a2e;
+    --line: #2c3354;
+    --text: #fff1e8;
+    --muted: #a7a3b8;
+    --red: #ff004d;
+    --pink: #ff77a8;
+    --orange: #ffa300;
+    --lav: #83769c;
+    --green: #00e436;
+    --blue: #29adff;
+    --radius: 10px;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --pixel: "Silkscreen", var(--mono);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 50% -200px, var(--navy-hi), transparent 70%),
+      var(--ink);
+    color: var(--text);
+    font: 15px/1.65 var(--mono);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--pink); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+  img, video { max-width: 100%; display: block; }
+  .pixel { image-rendering: pixelated; }
+
+  /* nav */
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; gap: 16px; }
+  nav .brand { display: flex; align-items: center; gap: 10px; font-family: var(--pixel); font-size: 18px; color: var(--text); }
+  nav .brand img { width: 32px; height: 32px; border-radius: 6px; }
+  nav .links { display: flex; gap: 20px; font-size: 14px; }
+  nav .links a { color: var(--muted); }
+  nav .links a:hover { color: var(--text); text-decoration: none; }
+
+  /* hero */
+  .hero { text-align: center; padding: 56px 0 40px; }
+  .hero .icon { width: 112px; height: 112px; margin: 0 auto 24px; border-radius: 22px; box-shadow: 0 0 0 4px var(--navy-hi), 0 20px 60px rgba(255, 0, 77, .25); }
+  h1 { font-family: var(--pixel); font-weight: 400; font-size: clamp(40px, 8vw, 72px); line-height: 1.05; margin: 0 0 16px; letter-spacing: 1px; }
+  h1 .dot { color: var(--red); }
+  .tagline { font-size: clamp(16px, 2.4vw, 20px); color: var(--muted); max-width: 640px; margin: 0 auto 32px; }
+  .tagline b { color: var(--text); font-weight: 600; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 8px; font-weight: 700; font-size: 14px; border: 2px solid transparent; }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn.primary { background: var(--red); color: var(--text); box-shadow: 0 4px 0 #a3002f; }
+  .btn.ghost { border-color: var(--line); color: var(--text); background: rgba(255,255,255,.03); }
+  .btn svg { width: 18px; height: 18px; fill: currentColor; }
+
+  /* terminal frame */
+  .term { margin: 48px auto 0; border-radius: var(--radius); overflow: hidden; background: #1e1e2e; border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0,0,0,.55); }
+  .term .bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #181825; border-bottom: 1px solid var(--line); }
+  .term .bar i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+  .term .bar i:nth-child(1) { background: #ff5f57; }
+  .term .bar i:nth-child(2) { background: #febc2e; }
+  .term .bar i:nth-child(3) { background: #28c840; }
+  .term .bar span { flex: 1; text-align: center; color: var(--muted); font-size: 12px; margin-right: 52px; }
+  .term video, .term img { width: 100%; height: auto; aspect-ratio: 1400 / 820; }
+
+  /* sections */
+  section { padding: 72px 0 8px; }
+  h2 { font-family: var(--pixel); font-weight: 400; font-size: clamp(24px, 4vw, 32px); margin: 0 0 8px; }
+  h2 + .lede { color: var(--muted); margin: 0 0 32px; }
+
+  /* features */
+  .features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 860px) { .features { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+  .card .k { font-family: var(--pixel); font-size: 13px; letter-spacing: .5px; display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .card .k::before { content: ""; width: 10px; height: 10px; background: var(--c, var(--red)); box-shadow: 2px 2px 0 rgba(0,0,0,.4); }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+
+  /* gallery */
+  .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+  .gallery figure { margin: 0; }
+  .gallery figure .term { margin: 0; }
+  .gallery figcaption { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .gallery figcaption b { color: var(--text); font-weight: 600; }
+  @media (max-width: 720px) { .gallery { grid-template-columns: minmax(0, 1fr); } }
+
+  /* install */
+  .steps { display: grid; gap: 14px; counter-reset: step; }
+  .step { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 14px; align-items: start; }
+  .step::before { counter-increment: step; content: counter(step); font-family: var(--pixel); width: 40px; height: 40px; display: grid; place-items: center; background: var(--navy-hi); border-radius: 8px; color: var(--orange); }
+  .step h3 { margin: 6px 0 8px; font-size: 15px; }
+  .step h3 small { color: var(--muted); font-weight: 400; }
+  .code { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 52px 12px 16px; overflow-x: auto; }
+  .code code { white-space: pre; font-size: 14px; }
+  .code code::before { content: "$ "; color: var(--lav); }
+  .copy { position: absolute; top: 8px; right: 8px; border: 1px solid var(--line); background: var(--ink); color: var(--muted); border-radius: 6px; padding: 4px 8px; font: 12px var(--mono); cursor: pointer; }
+  .copy:hover { color: var(--text); }
+  .note { margin-top: 18px; padding: 12px 16px; border-left: 3px solid var(--orange); background: rgba(255,163,0,.07); border-radius: 0 8px 8px 0; color: var(--muted); font-size: 14px; }
+  .note b { color: var(--text); }
+
+  /* keys */
+  .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .keys .card h3 { font-family: var(--pixel); font-weight: 400; font-size: 14px; margin: 0 0 12px; color: var(--pink); }
+  .keys dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; font-size: 14px; }
+  .keys dt { white-space: nowrap; }
+  .keys dd { margin: 0; color: var(--muted); }
+  kbd { display: inline-block; min-width: 22px; padding: 1px 7px; border-radius: 5px; background: var(--ink); border: 1px solid var(--line); border-bottom-width: 3px; font: 12px var(--mono); text-align: center; color: var(--text); }
+
+  /* footer */
+  footer { margin-top: 88px; padding: 32px 0 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  footer .row { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  footer p { margin: 0 0 6px; }
+
+  @media (max-width: 560px) {
+    nav .links a:not(.gh) { display: none; }
+    .hero { padding-top: 28px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .btn:hover { transform: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="#"><img class="pixel" src="assets/favicon.png" alt="">needledrop</a>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#keys">Keys</a>
+      <a class="gh" href="https://github.com/audiarmadhani/needledrop">GitHub</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <img class="icon pixel" src="assets/icon.png" width="112" height="112" alt="needledrop icon: a pixel-art vinyl record with the needle dropping">
+    <h1>needledrop<span class="dot">.</span></h1>
+    <p class="tagline">A <b>good-looking terminal client</b> for YouTube Music, written in Rust. 8-bit album art, visualizers synced to the beat, time-synced lyrics, and a queue that never runs dry.</p>
+    <div class="cta">
+      <a class="btn primary" href="#install">Install</a>
+      <a class="btn ghost" href="https://github.com/audiarmadhani/needledrop">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><span>needledrop</span></div>
+      <video autoplay muted loop playsinline poster="assets/screens/playing.png" aria-label="needledrop searching for a song, playing it with a visualizer, cycling album art palettes, showing synced lyrics, and switching to minimal mode">
+        <source src="assets/demo.webm" type="video/webm">
+        <source src="assets/demo.mp4" type="video/mp4">
+      </video>
+    </div>
+  </header>
+
+  <section id="features">
+    <h2>Everything in one pane</h2>
+    <p class="lede">The parts of YouTube Music you use, plus a few things it never had.</p>
+    <div class="features">
+      <div class="card" style="--c: var(--red)"><div class="k">Home</div><p>Your Quick picks, mixes, Listen again, and recommendations.</p></div>
+      <div class="card" style="--c: var(--pink)"><div class="k">Browse &amp; search</div><p>Artist and album pages, and search across songs, albums, artists, and playlists.</p></div>
+      <div class="card" style="--c: var(--orange)"><div class="k">Your library</div><p>Liked Music and your playlists, with likes you can toggle.</p></div>
+      <div class="card" style="--c: var(--green)"><div class="k">Endless queue</div><p>Shuffle, repeat, gapless playback, and a radio that starts when the queue runs out.</p></div>
+      <div class="card" style="--c: var(--blue)"><div class="k">8-bit album art</div><p>Covers as pixel art in your theme's colors, or the PICO-8, Game Boy, or C64 palettes.</p></div>
+      <div class="card" style="--c: var(--lav)"><div class="k">Visualizers</div><p>Spectrum bars, falling peaks, and an oscilloscope, after Windows Media Player's.</p></div>
+      <div class="card" style="--c: var(--pink)"><div class="k">Synced lyrics</div><p>Time-synced lyrics from LRCLIB, with YouTube Music's own as a fallback.</p></div>
+      <div class="card" style="--c: var(--orange)"><div class="k">Your theme</div><p>Draws with your terminal's palette and recolors live when you switch themes.</p></div>
+      <div class="card" style="--c: var(--green)"><div class="k">Media keys</div><p>The macOS Now Playing widget, or MPRIS on Linux.</p></div>
+    </div>
+  </section>
+
+  <section id="gallery">
+    <h2>Take a look</h2>
+    <p class="lede">Recorded signed out. Signed in, the side pane holds your library.</p>
+    <div class="gallery">
+      <figure>
+        <div class="term"><div class="bar"><i></i><i></i><i></i><span>bars</span></div><img loading="lazy" src="assets/screens/playing.png" alt="needledrop playing a song, with a spectrum visualizer and pixel-art album cover"></div>
+        <figcaption><b>Now playing.</b> The visualizer decodes the stream alongside mpv, so it stays in sync through seeks.</figcaption>
+      </figure>
+      <figure>
+        <div class="term"><div class="bar"><i></i><i></i><i></i><span>scope</span></div><img loading="lazy" src="assets/screens/scope.png" alt="needledrop with the oscilloscope visualizer"></div>
+        <figcaption><b>Three visualizers.</b> Press <kbd>V</kbd> for bars, peaks, or an oscilloscope.</figcaption>
+      </figure>
+      <figure>
+        <div class="term"><div class="bar"><i></i><i></i><i></i><span>game boy</span></div><img loading="lazy" src="assets/screens/gameboy.png" alt="needledrop with album art in the Game Boy palette"></div>
+        <figcaption><b>Retro palettes.</b> Press <kbd>A</kbd> to redraw the cover for a Game Boy, a C64, or a PICO-8.</figcaption>
+      </figure>
+      <figure>
+        <div class="term"><div class="bar"><i></i><i></i><i></i><span>lyrics</span></div><img loading="lazy" src="assets/screens/lyrics.png" alt="needledrop showing time-synced lyrics"></div>
+        <figcaption><b>Lyrics.</b> Press <kbd>L</kbd>, and the current line follows the song.</figcaption>
+      </figure>
+    </div>
+    <figure style="margin: 18px 0 0">
+      <div class="term"><div class="bar"><i></i><i></i><i></i><span>minimal</span></div><img loading="lazy" src="assets/screens/minimal.png" alt="needledrop's minimal full-screen mode with cover, lyrics, visualizer, and progress"></div>
+      <figcaption style="margin-top: 10px; font-size: 13px; color: var(--muted)"><b style="color: var(--text)">Minimal mode.</b> Press <kbd>M</kbd> for the cover, lyrics, visualizer, and progress, full screen.</figcaption>
+    </figure>
+  </section>
+
+  <section id="install">
+    <h2>Install</h2>
+    <p class="lede">macOS and Linux. You need Rust 1.88 or newer.</p>
+    <div class="steps">
+      <div class="step"><div>
+        <h3>Get the players <small>mpv plays, yt-dlp finds the streams, ffmpeg feeds the visualizer</small></h3>
+        <div class="code"><code>brew install mpv yt-dlp ffmpeg</code><button class="copy" type="button">copy</button></div>
+      </div></div>
+      <div class="step"><div>
+        <h3>Install needledrop</h3>
+        <div class="code"><code>cargo install --locked --git https://github.com/audiarmadhani/needledrop</code><button class="copy" type="button">copy</button></div>
+      </div></div>
+      <div class="step"><div>
+        <h3>Sign in <small>optional; uses a browser where you're signed in to YouTube Music</small></h3>
+        <div class="code"><code>needledrop login --browser chrome</code><button class="copy" type="button">copy</button></div>
+      </div></div>
+      <div class="step"><div>
+        <h3>Drop the needle</h3>
+        <div class="code"><code>needledrop</code><button class="copy" type="button">copy</button></div>
+      </div></div>
+    </div>
+    <div class="note"><b>Playback stopped working?</b> Update yt-dlp first. YouTube changes often, and yt-dlp usually catches up within days. On macOS, <code>needledrop install-app</code> makes it a proper music app, so notch and menu bar widgets can see it.</div>
+  </section>
+
+  <section id="keys">
+    <h2>Keys</h2>
+    <p class="lede">Vim-style, and on screen at the bottom of every pane.</p>
+    <div class="keys">
+      <div class="card"><h3>Navigate</h3><dl>
+        <dt><kbd>tab</kbd> <kbd>⇧tab</kbd></dt><dd>Switch pane</dd>
+        <dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Move</dd>
+        <dt><kbd>g</kbd> <kbd>G</kbd></dt><dd>Top / bottom</dd>
+        <dt><kbd>enter</kbd></dt><dd>Play, or open</dd>
+        <dt><kbd>esc</kbd></dt><dd>Back</dd>
+        <dt><kbd>i</kbd> <kbd>o</kbd></dt><dd>Artist / album</dd>
+        <dt><kbd>/</kbd></dt><dd>Search</dd>
+        <dt><kbd>q</kbd></dt><dd>Quit</dd>
+      </dl></div>
+      <div class="card"><h3>Play</h3><dl>
+        <dt><kbd>space</kbd></dt><dd>Pause / resume</dd>
+        <dt><kbd>n</kbd> <kbd>p</kbd></dt><dd>Next / previous</dd>
+        <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Seek 5 s</dd>
+        <dt><kbd>+</kbd> <kbd>-</kbd></dt><dd>Volume</dd>
+        <dt><kbd>a</kbd> <kbd>d</kbd></dt><dd>Queue / unqueue</dd>
+        <dt><kbd>s</kbd> <kbd>r</kbd></dt><dd>Shuffle / repeat</dd>
+        <dt><kbd>R</kbd></dt><dd>Start a radio</dd>
+        <dt><kbd>f</kbd></dt><dd>Like</dd>
+      </dl></div>
+      <div class="card"><h3>View</h3><dl>
+        <dt><kbd>L</kbd></dt><dd>Lyrics</dd>
+        <dt><kbd>M</kbd></dt><dd>Minimal mode</dd>
+        <dt><kbd>V</kbd></dt><dd>Visualizer style</dd>
+        <dt><kbd>A</kbd></dt><dd>Album art palette</dd>
+        <dt><kbd>ctrl-r</kbd></dt><dd>Refresh library</dd>
+      </dl></div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="row">
+      <div>
+        <p>needledrop is not affiliated with YouTube or Google. It uses unofficial APIs that can change without notice.</p>
+        <p>MIT or Apache-2.0 · Built with <a href="https://ratatui.rs">ratatui</a>, <a href="https://mpv.io">mpv</a>, and <a href="https://github.com/yt-dlp/yt-dlp">yt-dlp</a>.</p>
+      </div>
+      <div><a href="https://github.com/audiarmadhani/needledrop">GitHub</a> · <a href="https://github.com/audiarmadhani/needledrop/releases">Releases</a></div>
+    </div>
+  </footer>
+</div>
+<script>
+  for (const button of document.querySelectorAll(".copy")) {
+    button.addEventListener("click", async () => {
+      const text = button.previousElementSibling.textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "copied";
+      } catch {
+        button.textContent = "select it";
+      }
+      setTimeout(() => (button.textContent = "copy"), 1500);
+    });
+  }
+</script>
+</body>
+</html>
