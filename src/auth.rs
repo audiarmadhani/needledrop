@@ -22,6 +22,8 @@ pub const ORIGIN: &str = "https://music.youtube.com";
 pub enum Browser {
     Chrome,
     Arc,
+    /// Cra (cra.dk), a Chromium Embedded Framework browser rookie doesn't know.
+    Cra,
     Brave,
     Edge,
     Chromium,
@@ -144,6 +146,7 @@ impl Credentials {
         let cookies = match browser {
             Browser::Chrome => rookie::chrome(domains),
             Browser::Arc => rookie::arc(domains),
+            Browser::Cra => cra_cookies(domains),
             Browser::Brave => rookie::brave(domains),
             Browser::Edge => rookie::edge(domains),
             Browser::Chromium => rookie::chromium(domains),
@@ -362,4 +365,19 @@ mod tests {
         };
         assert_eq!(creds.cookie_header(), "SID=v");
     }
+}
+
+/// Cra keeps a standard Chromium cookie store under its own profile folder,
+/// encrypted with the "Cra Safe Storage" Keychain key.
+fn cra_cookies(domains: Option<Vec<String>>) -> rookie::Result<Vec<rookie::enums::Cookie>> {
+    let config = rookie::config::Browser {
+        paths: Vec::new(),
+        channels: None,
+        unix_crypt_name: None,
+        osx_key_service: Some("Cra Safe Storage".to_owned()),
+        osx_key_user: Some("Chromium".to_owned()),
+    };
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    let db = PathBuf::from(home).join("Library/Application Support/Cra/Chromium/Default/Cookies");
+    rookie::chromium_based(&config, db, domains)
 }

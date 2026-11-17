@@ -71,13 +71,27 @@ pub fn run_from_app() -> Result<()> {
     if !binary.is_file() {
         return Ok(());
     }
-    if fingerprint(&current)? != fs::read_to_string(fingerprint_path(&app)).unwrap_or_default() {
+    // Only a newer binary updates the app, so an old Homebrew copy that is
+    // still first on PATH can't roll back a fresh build.
+    if fingerprint(&current)? != fs::read_to_string(fingerprint_path(&app)).unwrap_or_default()
+        && is_newer(&current, &fingerprint_path(&app))
+    {
         copy_binary(&current, &binary, &app)?;
         // A new build may bring a new Info.plist or icon too.
         refresh_bundle(&app)?;
     }
     let error = Command::new(&binary).args(std::env::args_os().skip(1)).exec();
     Err(error).with_context(|| format!("could not start {}", binary.display()))
+}
+
+/// Whether `binary` was modified after the app last took a copy (or the app
+/// has no record of one).
+fn is_newer(binary: &Path, record: &Path) -> bool {
+    let modified = |path: &Path| fs::metadata(path).and_then(|m| m.modified()).ok();
+    match (modified(binary), modified(record)) {
+        (Some(binary), Some(record)) => binary > record,
+        _ => true,
+    }
 }
 
 fn inside_app_bundle(path: &Path) -> bool {
