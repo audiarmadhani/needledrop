@@ -309,6 +309,21 @@ fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
+/// Cra keeps a standard Chromium cookie store under its own profile folder,
+/// encrypted with the "Cra Safe Storage" Keychain key.
+fn cra_cookies(domains: Option<Vec<String>>) -> rookie::Result<Vec<rookie::enums::Cookie>> {
+    let config = rookie::config::Browser {
+        paths: Vec::new(),
+        channels: None,
+        unix_crypt_name: None,
+        osx_key_service: Some("Cra Safe Storage".to_owned()),
+        osx_key_user: Some("Chromium".to_owned()),
+    };
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    let db = PathBuf::from(home).join("Library/Application Support/Cra/Chromium/Default/Cookies");
+    rookie::chromium_based(&config, db, domains)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,19 +380,4 @@ mod tests {
         };
         assert_eq!(creds.cookie_header(), "SID=v");
     }
-}
-
-/// Cra keeps a standard Chromium cookie store under its own profile folder,
-/// encrypted with the "Cra Safe Storage" Keychain key.
-fn cra_cookies(domains: Option<Vec<String>>) -> rookie::Result<Vec<rookie::enums::Cookie>> {
-    let config = rookie::config::Browser {
-        paths: Vec::new(),
-        channels: None,
-        unix_crypt_name: None,
-        osx_key_service: Some("Cra Safe Storage".to_owned()),
-        osx_key_user: Some("Chromium".to_owned()),
-    };
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    let db = PathBuf::from(home).join("Library/Application Support/Cra/Chromium/Default/Cookies");
-    rookie::chromium_based(&config, db, domains)
 }
