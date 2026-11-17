@@ -186,6 +186,13 @@ impl Client {
         let mut response = self
             .post("browse", &[], json!({ "browseId": "FEmusic_liked_playlists" }))
             .await?;
+        // Expired cookies get a 200 with a "Sign in" prompt instead of the grid.
+        if is_signed_out(&response) {
+            bail!(
+                "YouTube treated your login as signed out. Open music.youtube.com in your browser, \
+                 make sure you're signed in, then run `needledrop login` again."
+            );
+        }
         let mut grid = take_at(
             &mut response,
             "/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/gridRenderer",
@@ -424,6 +431,17 @@ fn parse_panel_video(video: &Value) -> Option<Track> {
             .as_str()
             .map(str::to_owned),
     })
+}
+
+/// Whether YouTube served the response as signed out, which it reports as
+/// `logged_in: "0"` in the response's tracking params.
+fn is_signed_out(response: &Value) -> bool {
+    response["responseContext"]["serviceTrackingParams"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|service| service["params"].as_array().into_iter().flatten())
+        .any(|param| param["key"] == "logged_in" && param["value"] == "0")
 }
 
 fn parse_grid_playlists(grid: &Value) -> Vec<Playlist> {
@@ -698,6 +716,19 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn detects_signed_out_response() {
+        let response = |logged_in: &str| {
+            json!({ "responseContext": { "serviceTrackingParams": [
+                { "service": "CSI", "params": [{ "key": "yt_li", "value": logged_in }] },
+                { "service": "GFEEDBACK", "params": [{ "key": "logged_in", "value": logged_in }] },
+            ]}})
+        };
+        assert!(is_signed_out(&response("0")));
+        assert!(!is_signed_out(&response("1")));
+        assert!(!is_signed_out(&json!({})));
     }
 
     #[test]

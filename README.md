@@ -63,7 +63,7 @@ brew install mpv yt-dlp ffmpeg
 cargo install --locked --git https://github.com/audiarmadhani/needledrop
 
 # 3. Sign in with a browser where you're signed in to YouTube Music (optional)
-needledrop login --browser chrome   # or arc, brave, edge, firefox, zen, vivaldi, …
+needledrop login --browser chrome   # or arc, cra, brave, edge, firefox, zen, vivaldi, …
 
 # 4. Play
 needledrop
